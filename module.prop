@@ -1,0 +1,6 @@
+id=io.github.sol01st.nobrowser
+name=不用内置浏览器打开
+version=4.2.0
+versionCode=30
+author=大肥鱼deepseek-v4.1-flash
+description=点击应用内链接选择是否用内置浏览器打开
