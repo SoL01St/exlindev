@@ -1,4 +1,4 @@
-# 不用内置浏览器打开 · ExLink.NoBrowser
+# 不用内置浏览器打开 · ExLink-NoBrowser
 
 一个 LSPosed 模块：在微信、QQ、TIM、QQ邮箱、钉钉、百度贴吧等应用里点击链接时，把链接从应用内置浏览器里抢出来，交给你自己的浏览器打开。
 
