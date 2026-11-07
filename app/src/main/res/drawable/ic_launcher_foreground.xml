@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 浏览器窗口 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M28,30h50a7,7 0 0 1 7,7v16a7,7 0 0 1 -7,7h-50a7,7 0 0 1 -7,-7v-16a7,7 0 0 1 7,-7z" />
+    <!-- 地址栏 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M28,40h22" />
+    <!-- 鼠标指针 -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:strokeColor="#3482FF"
+        android:strokeWidth="3"
+        android:strokeLineJoin="round"
+        android:pathData="M52,19L52,61L63,51L70,68L81,63L74,47L89,45Z" />
+</vector>

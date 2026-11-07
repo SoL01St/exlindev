@@ -1,0 +1,5 @@
+minApiVersion=102
+targetApiVersion=102
+staticScope=false
+autoHotReload=false
+description=点击应用内链接选择是否用内置浏览器打开
