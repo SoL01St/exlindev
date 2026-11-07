@@ -38,7 +38,10 @@ object UpdateChecker {
             if (code != 200) return Result.Failed("HTTP $code")
             val body = conn.inputStream.bufferedReader().use { it.readText() }
             val obj = JSONObject(body)
-            val tag = obj.optString("tag_name").trim().removePrefix("v").removePrefix("V")
+            val rawTag = obj.optString("tag_name").trim().removePrefix("v").removePrefix("V")
+            // Xposed 模块仓库要求 tag 为 "versionCode-versionName"，
+            // 这里只取最后一段版本号，兼容 v5.0.0 和 32-5.0.0 两种写法
+            val tag = if (rawTag.contains('-')) rawTag.substringAfterLast('-') else rawTag
             if (tag.isEmpty()) return Result.Failed("响应缺少版本号")
             val url = obj.optString("html_url").ifBlank { RELEASES_PAGE }
             if (isNewer(tag, BuildConfig.VERSION_NAME)) Result.Newer(tag, url) else Result.Latest
