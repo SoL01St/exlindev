@@ -20,6 +20,7 @@
 
 ## 概况
 
+基于[xloger/ExLink](https://github.com/xloger/ExLink)修改。项目从代码到文档，全部由 AI 生成。开发者负责提出需求、验证效果与把控方向，实现一律交给 AI。
 | | |
 | --- | --- |
 | 包名 | `io.github.sol01st.nobrowser` |
@@ -124,7 +125,6 @@ app/src/main/resources/META-INF/xposed/
 - **首次接管的应用**需要在 LSPosed 里重新勾选一次作用域，这是 LSPosed 的缓存机制，模块无法绕过
 - 在 LSPosed 模块列表里开关本模块后返回，列表会按启用状态重排并定位到本模块，这是 LSPosed 自身行为
 - 作用域写入与配置发布依赖 root（通过内置 sqlite3 直接维护 LSPosed 数据库与 `/data/local/tmp/nxb_config.json`）
-- 不支持隐藏桌面图标：隐藏后 LSPosed 的「运行」入口会一起失效，容易把人锁在外面
 
 ## 第三方组件
 
