@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -17,11 +18,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.sol01st.nobrowser.core.LinkRule
 import io.github.sol01st.nobrowser.core.TargetApp
+import io.github.sol01st.nobrowser.data.RuleStore
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
@@ -46,23 +51,31 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
     var showTip by remember { mutableStateOf(false) }
     var pendingDeleteRule by remember { mutableStateOf<LinkRule?>(null) }
     var pendingDeleteHost by remember { mutableStateOf<String?>(null) }
+    var showResetConfirm by remember { mutableStateOf(false) }
+    // 被关掉的白名单条目（字符串列表保持不变，单独存一份禁用集合）
+    var whiteDisabled by remember(app.packageName) { mutableStateOf(app.disabledWhiteUrls.toSet()) }
+    val context = LocalContext.current
+    val store = remember { RuleStore(context) }
 
     fun commit(
         rulesNew: List<LinkRule> = rules,
         whiteNew: List<String> = white,
         enabledNew: Boolean = enabled,
         askNew: Boolean = askEach,
+        whiteDisabledNew: Set<String> = whiteDisabled,
     ) {
         rules = rulesNew
         white = whiteNew
         enabled = enabledNew
         askEach = askNew
+        whiteDisabled = whiteDisabledNew
         onSave(
             app.copy(
                 enabled = enabledNew,
                 askEachTime = askNew,
                 rules = rulesNew.toMutableList(),
                 whiteUrls = whiteNew.toMutableList(),
+                disabledWhiteUrls = whiteDisabledNew.toMutableSet(),
             ),
         )
     }
@@ -142,6 +155,8 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp)
+                        // 关掉的规则整行变淡，一眼能看出哪条没生效
+                        .alpha(if (rule.enabled) 1f else 0.45f)
                         .animateItem(),
                     cornerRadius = 18.dp,
                 ) {
@@ -149,8 +164,20 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
                         title = rule.activityName,
                         summary = "取值方式：" + describeKey(rule.extrasKey),
                         endActions = {
-                            IconButton(onClick = { pendingDeleteRule = rule }) {
-                                Icon(Icons.Default.Delete, contentDescription = "删除")
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Switch(
+                                    checked = rule.enabled,
+                                    onCheckedChange = { on ->
+                                        commit(
+                                            rulesNew = rules.map {
+                                                if (it === rule) it.copy(enabled = on) else it
+                                            },
+                                        )
+                                    },
+                                )
+                                IconButton(onClick = { pendingDeleteRule = rule }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "删除")
+                                }
                             }
                         },
                         onClick = { editingRule = rule },
@@ -179,18 +206,30 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
                 }
             }
             itemsIndexed(white, key = { index, host -> "w" + index + "|" + host }) { _, host ->
+                val whiteOn = host !in whiteDisabled
                 NxbCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp)
+                        .alpha(if (whiteOn) 1f else 0.45f)
                         .animateItem(),
                     cornerRadius = 18.dp,
                 ) {
                     BasicComponent(
                         title = host,
                         endActions = {
-                            IconButton(onClick = { pendingDeleteHost = host }) {
-                                Icon(Icons.Default.Delete, contentDescription = "删除")
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Switch(
+                                    checked = whiteOn,
+                                    onCheckedChange = { on ->
+                                        commit(
+                                            whiteDisabledNew = if (on) whiteDisabled - host else whiteDisabled + host,
+                                        )
+                                    },
+                                )
+                                IconButton(onClick = { pendingDeleteHost = host }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "删除")
+                                }
                             }
                         },
                         onClick = { editingHost = host },
@@ -203,6 +242,16 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
                         title = "添加白名单域名",
                         summary = "命中白名单的链接保持应用内打开",
                         onClick = { showWhiteDialog = true },
+                    )
+                }
+            }
+
+            item {
+                GroupCard {
+                    BasicComponent(
+                        title = "按模板重置规则",
+                        summary = "恢复此应用的默认规则与白名单，保留开关设置",
+                        onClick = { showResetConfirm = true },
                     )
                 }
             }
@@ -225,7 +274,7 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
             initialKey = rule.extrasKey,
             onDismiss = { editingRule = null },
             onConfirm = { activity, key ->
-                commit(rulesNew = rules.map { if (it === rule) LinkRule(activity, key) else it })
+                commit(rulesNew = rules.map { if (it === rule) it.copy(activityName = activity, extrasKey = key) else it })
                 editingRule = null
             },
         )
@@ -260,8 +309,33 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
             initial = host,
             onDismiss = { editingHost = null },
             onConfirm = { value ->
-                commit(whiteNew = white.map { if (it == host) value else it })
+                commit(
+                    whiteNew = white.map { if (it == host) value else it },
+                    whiteDisabledNew = if (host in whiteDisabled) (whiteDisabled - host) + value else whiteDisabled,
+                )
                 editingHost = null
+            },
+        )
+    }
+    if (showResetConfirm) {
+        SimpleDialog(
+            title = "重置规则",
+            text = "将把「${app.appName}」的规则与白名单恢复为内置模板，当前自定义内容会被覆盖。",
+            confirmText = "重置",
+            onDismiss = { showResetConfirm = false },
+            onConfirm = {
+                showResetConfirm = false
+                val tpl = store.templateFor(app.packageName)
+                if (tpl == null) {
+                    HintState.show("没有这个应用的内置模板")
+                } else {
+                    commit(
+                        rulesNew = tpl.rules.toList(),
+                        whiteNew = tpl.whiteUrls.toList(),
+                        whiteDisabledNew = emptySet(),
+                    )
+                    HintState.show("已按模板重置")
+                }
             },
         )
     }
@@ -273,8 +347,10 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
                 "· ExDat：只读取 Intent.data\n" +
                 "· 其它：按对应 key 读取 extras 或 Bundle 的字符串\n\n" +
                 "匹配规则\n" +
-                "Activity 同时匹配「发起跳转的 Activity」和「Intent 指向的目标 Activity」，" +
-                "支持 * 和 ? 通配，不区分大小写。",
+                "按「Intent 指向的目标 Activity」匹配（没有显式目标时退回按发起方匹配），" +
+                "支持 * 和 ? 通配，不区分大小写。\n\n" +
+                "单条开关\n" +
+                "每条规则和白名单右侧都有独立开关，关掉的条目立即不参与匹配。",
             onDismiss = { showTip = false },
         )
     }
@@ -289,7 +365,9 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
         },
         onDismissHost = { pendingDeleteHost = null },
         onConfirmHost = {
-            pendingDeleteHost?.let { commit(whiteNew = white - it) }
+            pendingDeleteHost?.let { host ->
+                commit(whiteNew = white - host, whiteDisabledNew = whiteDisabled - host)
+            }
             pendingDeleteHost = null
         },
     )

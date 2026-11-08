@@ -9,10 +9,10 @@ package io.github.sol01st.nobrowser.core
 object DefaultRules {
 
     private const val GENERIC_RULES = """
-        { "activityName": "*WebView*", "extrasKey": "ExAuto" },
-        { "activityName": "*Browser*", "extrasKey": "ExAuto" },
+        { "activityName": "*WebViewUI*", "extrasKey": "ExAuto" },
+        { "activityName": "*WebViewActivity*", "extrasKey": "ExAuto" },
         { "activityName": "*WebActivity*", "extrasKey": "ExAuto" },
-        { "activityName": "ExDatAll", "extrasKey": "ExAuto" }
+        { "activityName": "*BrowserActivity*", "extrasKey": "ExAuto" }
     """
 
     const val JSON = """
@@ -24,7 +24,7 @@ object DefaultRules {
       "isUse": true, "isTest": false, "isUserBuild": false, "frequent": true,
       "askEachTime": true,
       "rules": [ { "activityName": "com.tencent.mobileqq.activity.QQBrowserDelegationActivity", "extrasKey": "url" } ],
-      "whiteUrl": [ "qzone.qq.com", "qun.qq.com", "jq.qq.com", "mqq.tenpay.com", "mp.qq.com", "yundong.qq.com" ]
+      "whiteUrl": [ "qzone.qq.com", "qun.qq.com", "jq.qq.com", "mqq.tenpay.com", "mp.qq.com", "yundong.qq.com", "ptlogin2.qq.com", "docs.qq.com", "pay.qq.com" ]
     },
     {
       "appName": "微信",
@@ -35,7 +35,7 @@ object DefaultRules {
         { "activityName": "com.tencent.mm.ui.LauncherUI", "extrasKey": "rawUrl" },
         { "activityName": "*MMWebViewUI", "extrasKey": "ExAuto" }
       ],
-      "whiteUrl": [ "open.weixin.qq.com", "weixin.qq.com" ]
+      "whiteUrl": [ "open.weixin.qq.com", "weixin.qq.com", "tenpay.com", "servicewechat.com" ]
     },
     {
       "appName": "QQ邮箱",
@@ -64,7 +64,7 @@ object DefaultRules {
         { "activityName": "com.sina.weibo.feed.HomeListActivity", "extrasKey": "ExDat" },
         { "activityName": "com.sina.weibo.feed.DetailWeiboActivity", "extrasKey": "ExDat" }
       ],
-      "whiteUrl": [ "card.weibo.com" ]
+      "whiteUrl": [ "card.weibo.com", "weibo.com", "weibo.cn" ]
     },
     {
       "appName": "百度贴吧",
@@ -75,7 +75,7 @@ object DefaultRules {
         { "activityName": "com.baidu.tieba.imMessageCenter.im.chat.PersonalChatActivity", "extrasKey": "tag_url" },
         { "activityName": "com.baidu.tieba.pb.pb.main.PbActivity", "extrasKey": "tag_url" }
       ],
-      "whiteUrl": []
+      "whiteUrl": [ "tieba.baidu.com" ]
     },
     {
       "appName": "钉钉",
@@ -84,10 +84,10 @@ object DefaultRules {
       "askEachTime": true,
       "rules": [
         { "activityName": "com.alibaba.android.rimet.biz.BrowserActivity", "extrasKey": "ExAuto" },
-        { "activityName": "*WebView*", "extrasKey": "ExAuto" },
-        { "activityName": "*Browser*", "extrasKey": "ExAuto" }
+        { "activityName": "*WebViewActivity*", "extrasKey": "ExAuto" },
+        { "activityName": "*WebActivity*", "extrasKey": "ExAuto" }
       ],
-      "whiteUrl": [ "login.dingtalk.com" ]
+      "whiteUrl": [ "dingtalk.com", "aliwork.com" ]
     },
     {
       "appName": "哔哩哔哩",
@@ -111,7 +111,7 @@ object DefaultRules {
       "isUse": true, "isTest": false, "isUserBuild": false, "frequent": true,
       "askEachTime": true,
       "rules": [ { "activityName": "com.tencent.mobileqq.activity.QQBrowserDelegationActivity", "extrasKey": "url" } ],
-      "whiteUrl": [ "qzone.qq.com", "qun.qq.com", "jq.qq.com", "mqq.tenpay.com", "mp.qq.com" ]
+      "whiteUrl": [ "qzone.qq.com", "qun.qq.com", "jq.qq.com", "mqq.tenpay.com", "mp.qq.com", "ptlogin2.qq.com", "docs.qq.com", "pay.qq.com" ]
     },
     {
       "appName": "QQ国际版",

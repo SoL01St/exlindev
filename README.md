@@ -4,7 +4,7 @@
 
 **ExLink · NoBrowser** — 把应用内置浏览器里的链接抢出来，交给你自己的浏览器
 
-[![Version](https://img.shields.io/badge/version-5.0.0-1f6feb)](https://github.com/SoL01St/exlindev/releases)
+[![Version](https://img.shields.io/badge/version-5.0.1-1f6feb)](https://github.com/SoL01St/exlindev/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3ddc84?logo=android&logoColor=white)](https://developer.android.com)
 [![LSPosed](https://img.shields.io/badge/LSPosed-API%20102-7c5cff)](https://github.com/libxposed/api)
 [![License](https://img.shields.io/badge/license-MIT-2ea043)](LICENSE)
@@ -23,7 +23,7 @@
 | | |
 | --- | --- |
 | 包名 | `io.github.sol01st.nobrowser` |
-| 版本 | 5.0.0（versionCode 32） |
+| 版本 | 5.0.1（versionCode 33） |
 | 运行环境 | LSPosed · libxposed API 102 |
 | 系统 | Android 8.0+（minSdk 26 / targetSdk 36），测试于 HyperOS 4 · Android 17 |
 | 界面 | Jetpack Compose + [Miuix](https://github.com/compose-miuix-ui/miuix) |
@@ -34,7 +34,8 @@
 
 - **可选弹窗**：开启「每次询问」时点链接弹出选择框，可选用应用内浏览器还是手机浏览器；关闭后直接交给手机浏览器
 - **实时生效**：改完开关不用杀应用，下一次点链接就按新配置走（拦截前检查配置文件时间戳）
-- **规则引擎**：Activity 支持 `*` `?` 通配、不区分大小写，同时匹配发起跳转和目标 Activity
+- **规则引擎**：Activity 支持 `*` `?` 通配、不区分大小写，按目标 Activity 匹配（无显式目标时退回按发起方）
+- **单条开关**：每条规则、每条白名单都能单独启停，关掉的条目立即不参与匹配
 - **取值方式**：`ExAuto`（自动嗅探 data/extras/Bundle 里的 http 链接）、`ExDat`（只读 Intent.data）或指定 extras key；取不到时自动回退为全文嗅探
 - **白名单**：按域名放行，命中的链接保持在应用内打开
 - **作用域双向同步**：在 LSPosed 里勾选/取消作用域，模块首页自动同步；在模块里开关应用也会写回 LSPosed
@@ -54,8 +55,12 @@
 - **检查更新**：关于页读取 GitHub 最新 Release 并与当前版本比较
 - **下拉刷新**：重新扫描已安装应用，新装应用无需重启模块
 - **长按移除**：从首页移除应用时保留其规则，重新添加自动恢复
+- **按模板重置**：编辑页可把某个应用的规则与白名单一键恢复成内置模板
+- **扫一扫友好**：微信等应用的扫一扫结果留在应用内打开，不会被误拦
 
 默认接管：QQ、微信、QQ邮箱、百度贴吧、钉钉、TIM。其他应用点右下角 `+` 添加。
+
+内置规则里的每一条、每个白名单域名都可以单独关掉——比如不需要拦截某个页面，把对应规则关掉即可，不用整条删除。
 
 ## 安装
 

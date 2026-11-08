@@ -16,8 +16,8 @@ android {
         applicationId = "io.github.sol01st.nobrowser"
         minSdk = 26
         targetSdk = 36
-        versionCode = 32
-        versionName = "5.0.0"
+        versionCode = 33
+        versionName = "5.0.1"
         resourceConfigurations += listOf("zh", "en")
     }
 

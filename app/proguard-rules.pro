@@ -6,8 +6,8 @@
 }
 
 # 注入到宿主进程的代码保持稳定
--keep class com.exlink.nobrowser.hook.** { *; }
--keep class com.exlink.nobrowser.core.** { *; }
+-keep class io.github.sol01st.nobrowser.hook.** { *; }
+-keep class io.github.sol01st.nobrowser.core.** { *; }
 
 # Miuix / Compose 保守保留
 -keep class top.yukonga.miuix.** { *; }

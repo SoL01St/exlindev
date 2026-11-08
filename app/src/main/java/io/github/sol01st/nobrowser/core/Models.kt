@@ -7,6 +7,8 @@ import org.json.JSONObject
 data class LinkRule(
     var activityName: String,
     var extrasKey: String,
+    /** 单条规则开关：关掉后这条规则不参与匹配。 */
+    var enabled: Boolean = true,
 ) {
     fun matches(activity: String): Boolean = globMatch(activityName, activity)
 
@@ -28,6 +30,7 @@ data class LinkRule(
     fun toJson(): JSONObject = JSONObject().apply {
         put("activityName", activityName)
         put("extrasKey", extrasKey)
+        put("enabled", enabled)
     }
 }
 
@@ -42,6 +45,8 @@ data class TargetApp(
     var addedByUser: Boolean = false,
     /** 命中时先弹选择框，而不是直接交给外部浏览器。 */
     var askEachTime: Boolean = true,
+    /** 被关掉的白名单条目（字符串本身不变，便于旧数据兼容）。 */
+    val disabledWhiteUrls: MutableSet<String> = mutableSetOf(),
     /** 常用应用，列表中优先显示。 */
     var frequent: Boolean = false,
 ) {
@@ -55,6 +60,7 @@ data class TargetApp(
         put("frequent", frequent)
         put("rules", JSONArray().apply { rules.forEach { put(it.toJson()) } })
         put("whiteUrl", JSONArray().apply { whiteUrls.forEach { put(it) } })
+        put("whiteUrlDisabled", JSONArray().apply { disabledWhiteUrls.forEach { put(it) } })
     }
 
     companion object {
@@ -63,12 +69,22 @@ data class TargetApp(
             o.optJSONArray("rules")?.let { arr ->
                 for (i in 0 until arr.length()) {
                     val r = arr.optJSONObject(i) ?: continue
-                    rules.add(LinkRule(r.optString("activityName"), r.optString("extrasKey")))
+                    rules.add(
+                        LinkRule(
+                            activityName = r.optString("activityName"),
+                            extrasKey = r.optString("extrasKey"),
+                            enabled = r.optBoolean("enabled", true),
+                        ),
+                    )
                 }
             }
             val white = mutableListOf<String>()
             o.optJSONArray("whiteUrl")?.let { arr ->
                 for (i in 0 until arr.length()) arr.optString(i).takeIf { it.isNotBlank() }?.let { white.add(it) }
+            }
+            val whiteDisabled = mutableSetOf<String>()
+            o.optJSONArray("whiteUrlDisabled")?.let { arr ->
+                for (i in 0 until arr.length()) arr.optString(i).takeIf { it.isNotBlank() }?.let { whiteDisabled.add(it) }
             }
             val pkg = o.optString("packageName")
             return TargetApp(
@@ -76,6 +92,7 @@ data class TargetApp(
                 packageName = pkg,
                 rules = rules,
                 whiteUrls = white,
+                disabledWhiteUrls = whiteDisabled,
                 enabled = o.optBoolean("isUse", true),
                 builtIn = !o.optBoolean("isUserBuild", false),
                 addedByUser = o.optBoolean("addedByUser", false),

@@ -18,6 +18,18 @@ class RuleStore(context: Context) {
 
     private val app = context.applicationContext
     private val sp = app.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
+
+    /** 本次启动是否刚升级了内置规则（AppRoot 据此重发一次配置文件）。 */
+    @Volatile
+    var justMigrated: Boolean = false
+        private set
+
+    /** 读取并清除「刚升级内置规则」标记。 */
+    fun consumeMigration(): Boolean {
+        if (!justMigrated) return false
+        justMigrated = false
+        return true
+    }
     private val backupDir = File(app.filesDir, "backups")
 
     private val DEFAULT_ORDER = listOf(
@@ -65,14 +77,38 @@ class RuleStore(context: Context) {
                 if (index >= 0) index else Int.MAX_VALUE
             },
         )
+        migrateBuiltInRules(list)
         return list
+    }
+
+    /**
+     * 内置规则升级：把内置应用（非用户手动添加的）的规则与白名单刷新到最新默认值，
+     * 保留用户自己的开关、每次询问设置与列表顺序。改了 DefaultRules 就提升 RULES_VERSION。
+     */
+    private fun migrateBuiltInRules(list: MutableList<TargetApp>) {
+        if (sp.getInt(KEY_RULES_VERSION, 1) >= RULES_VERSION) return
+        val defaults = defaultApps().associateBy { it.packageName }
+        for (i in list.indices) {
+            val app = list[i]
+            if (app.addedByUser) continue
+            val def = defaults[app.packageName] ?: continue
+            list[i] = app.copy(
+                rules = def.rules.toMutableList(),
+                whiteUrls = def.whiteUrls.toMutableList(),
+            )
+        }
+        sp.edit().putInt(KEY_RULES_VERSION, RULES_VERSION).commit()
+        save(list)
+        justMigrated = true
+        android.util.Log.i("ExLinkNoBrowser", "built-in rules migrated to v$RULES_VERSION")
     }
 
     fun templateFor(packageName: String): TargetApp? =
         RulesCodec.decode(DefaultRules.JSON).firstOrNull { it.packageName == packageName }
 
     fun save(list: List<TargetApp>) {
-        sp.edit().putString(Constants.PREFS_KEY_RULES, RulesCodec.encode(list)).apply()
+        // 同步写：规则很小，apply() 的异步落盘在进程被立刻回收时会丢
+        sp.edit().putString(Constants.PREFS_KEY_RULES, RulesCodec.encode(list)).commit()
     }
 
     fun exportJson(list: List<TargetApp>): String = RulesCodec.encode(list)
@@ -127,9 +163,13 @@ class RuleStore(context: Context) {
         backupDir.listFiles { f -> f.isFile && f.name.endsWith(".json") }
             ?.maxByOrNull { it.lastModified() }
 
-    /** 备份保留份数上限。 */
     companion object {
+        /** 备份保留份数上限。 */
         const val MAX_BACKUPS = 5
+
+        /** 内置规则版本：改动 DefaultRules 后加一，老用户下次启动会自动刷新内置规则。 */
+        private const val RULES_VERSION = 2
+        private const val KEY_RULES_VERSION = "rulesVersion"
     }
 
     fun backupCount(): Int =

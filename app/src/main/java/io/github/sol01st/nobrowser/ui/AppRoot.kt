@@ -116,6 +116,11 @@ fun AppRoot() {
         installed = withContext(Dispatchers.IO) { InstalledApps.load(context) }
         moduleEnabled = withContext(Dispatchers.IO) { ModuleState.isEnabled(context) }
         installedLoaded = true
+        // 内置规则刚升级过：重发配置文件，注入侧（微信等）才会读到新的规则与白名单
+        if (store.consumeMigration()) {
+            val json = store.exportJson(store.load())
+            withContext(Dispatchers.IO) { ScopeManager.publishConfig(context, json) }
+        }
     }
 
     fun persist(list: List<TargetApp>) {

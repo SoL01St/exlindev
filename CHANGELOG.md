@@ -1,5 +1,17 @@
 # 更新日志
 
+## 5.0.1
+
+- **修复微信扫一扫无法正确跳转**：扫一扫打开的网页现在保持在应用内，不再被误拦；从聊天、朋友圈点链接仍然照常交给浏览器
+- **单条规则 / 白名单开关**：每条拦截规则、每条白名单右侧都有独立开关，关掉的条目立即不参与匹配，整行置灰
+- **按模板重置规则**：编辑页新增入口，可把某个应用的规则与白名单一键恢复成内置模板（保留接管开关与每次询问设置）
+- 修复内置规则的误伤：`*MMWebViewUI` 这类通配原先会同时匹配「发起跳转的 Activity」，导致微信网页内任意跳转都被判定命中；模板应用里的 `*WebView*` / `*Browser*` 通配同样过宽
+- 补齐各应用白名单：微信（`tenpay.com`、`servicewechat.com`）、QQ / TIM（`ptlogin2.qq.com`、`docs.qq.com`、`pay.qq.com`）、百度贴吧（`tieba.baidu.com`）、钉钉（`dingtalk.com`、`aliwork.com`）、微博（`weibo.com`、`weibo.cn`）
+- `ExAuto` 取值收紧：优先 `Intent.data` 与常见链接字段，只有目标是 WebView 类页面时才做全文嗅探，减少误判
+- 修复 R8 keep 规则里的旧包名（`com.exlink.nobrowser` → `io.github.sol01st.nobrowser`），hook / core 包不再被混淆
+- 规则保存改为同步落盘，避免进程被回收时丢掉开关状态
+- versionCode 33
+
 ## 5.0.0
 
 界面与交互整体重做，补齐备份、诊断、更新检查等常用能力。

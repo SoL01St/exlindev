@@ -36,6 +36,15 @@ internal object HookEngine {
     private const val CONFIG_PATH = "/data/local/tmp/nxb_config.json"
     private val PROCEED = Any()
 
+    /** 扫一扫/扫码结果页：从这里打开的网页保持在应用内，不参与拦截。 */
+    private val SCANNER_HINTS = listOf("plugin.scanner", "scanner.ui", "qrcode", "scanui", "barcode")
+
+    /** ExAuto 优先尝试的常见链接字段，避免把 Intent 里任意一个 http 串当成目标链接。 */
+    private val URL_KEYS = listOf(
+        "url", "targetUrl", "target_url", "link", "jumpUrl", "jump_url",
+        "extraUrl", "webUrl", "redirectUrl", "loadUrl",
+    )
+
     @Volatile
     private var currentApp: TargetApp? = null
     @Volatile
@@ -143,32 +152,46 @@ internal object HookEngine {
         if (intent.getBooleanExtra(Constants.EXTRA_GUARD, false)) return PROCEED
 
         val bundle = args.getOrNull(args.size - 1) as? Bundle
-        val candidates = ArrayList<String>(2)
-        candidates.add(activity.javaClass.name)
-        intent.component?.className?.let { candidates.add(it) }
+        val caller = activity.javaClass.name
+        val target = intent.component?.className
 
-        val rules = app.rules.filter { rule -> candidates.any { rule.matches(it) } }
+        // 扫一扫打开的网页留在应用内；从聊天/朋友圈点链接仍然照常拦截
+        val callerLower = caller.lowercase()
+        if (SCANNER_HINTS.any { callerLower.contains(it) }) {
+            Log.d(TAG, "skip(scanner) caller=$caller target=$target")
+            return PROCEED
+        }
+
+        // 只按目标 Activity 匹配。把发起方也算进来时，「网页里发起任意跳转」都会命中 WebView 通配规则
+        val candidates = ArrayList<String>(2)
+        if (target != null) candidates.add(target) else candidates.add(caller)
+
+        // 单条规则开关：关掉的规则不参与匹配
+        val rules = app.rules.filter { rule ->
+            rule.enabled && candidates.any { rule.matches(it) }
+        }
         if (rules.isEmpty()) {
-            Log.d(TAG, "skip(no-rule) candidates=${candidates.joinToString()}")
+            Log.d(TAG, "skip(no-rule) caller=$caller target=$target")
             return PROCEED
         }
 
         val rawUrl = rules.asSequence()
-            .mapNotNull { extractUrl(it, intent, bundle) }
+            .mapNotNull { extractUrl(it, intent, bundle, target) }
             .mapNotNull { UrlUtil.normalize(it) }
             .firstOrNull()
         if (rawUrl == null) {
-            Log.d(TAG, "skip(no-url) candidates=${candidates.joinToString()} keys=${rules.joinToString { it.extrasKey }}")
+            Log.d(TAG, "skip(no-url) caller=$caller target=$target keys=${rules.joinToString { it.extrasKey }}")
             return PROCEED
         }
 
         if (!rawUrl.startsWith("http")) return PROCEED
-        if (UrlUtil.matchWhite(rawUrl, app.whiteUrls)) {
+        val activeWhite = app.whiteUrls.filter { it !in app.disabledWhiteUrls }
+        if (UrlUtil.matchWhite(rawUrl, activeWhite)) {
             Log.i(TAG, "whitelisted: $rawUrl")
             return PROCEED
         }
 
-        Log.i(TAG, "intercept activity=${candidates.joinToString()} url=$rawUrl")
+        Log.i(TAG, "intercept caller=$caller target=$target url=$rawUrl")
         if (app.askEachTime) {
             activity.runOnUiThread { showChooser(activity, intent, rawUrl) }
         } else {
@@ -181,15 +204,34 @@ internal object HookEngine {
      * 取值：优先按规则指定的 key 精确取，取不到自动退化到 ExAuto 全文嗅探，
      * 这样应用改版换了 extras key 也不会直接失效。
      */
-    private fun extractUrl(rule: LinkRule, intent: Intent, bundle: Bundle?): String? {
+    private fun extractUrl(rule: LinkRule, intent: Intent, bundle: Bundle?, target: String?): String? {
         fun sniff(): String? = findInIntent(intent) ?: bundle?.let { findInBundle(it) }
+        // 只有目标是 WebView / 浏览器类页面时才做全文嗅探；
+        // 否则页面上随便一个 extra 里的 http 串都会把原生跳转误判成打开网页
+        fun sniffIfWeb(): String? = if (targetLooksWeb(target)) sniff() else null
         return when (rule.extrasKey) {
-            Constants.KEY_EX_DAT -> intent.dataString ?: sniff()
-            Constants.KEY_EX_AUTO -> sniff()
+            Constants.KEY_EX_DAT -> intent.dataString ?: sniffIfWeb()
+            Constants.KEY_EX_AUTO -> intent.dataString
+                ?: commonKeyUrl(intent, bundle)
+                ?: sniffIfWeb()
             else -> intent.getStringExtra(rule.extrasKey)
                 ?: bundle?.getString(rule.extrasKey)
-                ?: sniff()
+                ?: sniffIfWeb()
         }
+    }
+
+    private fun commonKeyUrl(intent: Intent, bundle: Bundle?): String? {
+        for (key in URL_KEYS) {
+            intent.getStringExtra(key)?.let { UrlUtil.normalize(it) }?.let { return it }
+            bundle?.getString(key)?.let { UrlUtil.normalize(it) }?.let { return it }
+        }
+        return null
+    }
+
+    private fun targetLooksWeb(target: String?): Boolean {
+        if (target == null) return false
+        val t = target.lowercase()
+        return t.contains("webview") || t.contains("browser") || t.contains("webactivity")
     }
 
     private fun findInIntent(intent: Intent): String? {
