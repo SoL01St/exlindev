@@ -110,7 +110,7 @@ object DefaultRules {
         { "activityName": "com.taobao.idlefish.webview.SystemWebViewActivity", "extrasKey": "ExDat", "scope": "target" },
         { "activityName": "com.taobao.idlefish.goosefish.GooseFishWebActivity", "extrasKey": "ExDat", "scope": "target" }
       ],
-      "whiteUrl": [ "=h5.m.goofish.com" ]
+      "whiteUrl": []
     }
   ]
 }

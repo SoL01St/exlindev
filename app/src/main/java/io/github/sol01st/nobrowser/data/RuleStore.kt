@@ -167,7 +167,7 @@ class RuleStore(context: Context) {
         const val MAX_BACKUPS = 5
 
         /** 内置规则版本：改动 DefaultRules 后加一，老用户下次启动会自动刷新内置规则。 */
-        private const val RULES_VERSION = 10
+        private const val RULES_VERSION = 11
         private const val KEY_RULES_VERSION = "rulesVersion"
     }
 
