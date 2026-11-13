@@ -150,37 +150,8 @@ fun AboutScreen(onBack: () -> Unit) {
                 }
             }
 
-            item { SmallTitle("使用提示") }
-            item {
-                GroupCard {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        TipItem("1", "作用域同步与配置写入需要 root 权限，可在「设置 - Root 权限」查看状态。")
-                        TipItem("2", "首次接管的应用需在 LSPosed 作用域里重新勾选一次。")
-                        TipItem("3", "首页默认接管 QQ、微信、QQ邮箱、百度贴吧、钉钉、TIM；其他应用点右下角 + 号添加。")
-                        TipItem("4", "「每次询问」开启时，点链接先弹窗；关闭时直接交给手机浏览器。")
-                    }
-                }
-            }
-
             item { Spacer(Modifier.height(8.dp)) }
         }
     }
 }
 
-@Composable
-private fun TipItem(index: String, text: String) {
-    Row(Modifier.fillMaxWidth()) {
-        AppText(index + ". ", fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-        AppText(
-            text,
-            fontSize = 13.sp,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            modifier = Modifier.weight(1f),
-        )
-    }
-}

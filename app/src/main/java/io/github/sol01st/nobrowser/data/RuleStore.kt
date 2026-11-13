@@ -36,12 +36,10 @@ class RuleStore(context: Context) {
         "com.tencent.mobileqq",
         "com.tencent.mm",
         "com.tencent.androidqqmail",
-        "com.sina.weibo",
         "com.baidu.tieba",
         "com.alibaba.android.rimet",
         "com.tencent.tim",
-        "tv.danmaku.bili",
-        "com.xingin.xhs",
+        "com.taobao.idlefish",
     )
 
     fun defaultApps(): List<TargetApp> {
@@ -63,7 +61,7 @@ class RuleStore(context: Context) {
         }
         val list = RulesCodec.decode(saved)
         val defaultPkgs = defaultApps().map { it.packageName }.toHashSet()
-        // 老版本会把所有内置模板合并进列表，这里只保留默认 8 个与用户手动添加的
+        // 老版本会把所有内置模板合并进列表，这里只保留默认应用与用户手动添加的
         list.removeAll { it.packageName !in defaultPkgs && !it.addedByUser }
         // 内置默认项补全，避免版本升级后缺项
         val known = list.map { it.packageName }.toHashSet()
@@ -108,10 +106,11 @@ class RuleStore(context: Context) {
 
     fun save(list: List<TargetApp>) {
         // 同步写：规则很小，apply() 的异步落盘在进程被立刻回收时会丢
-        sp.edit().putString(Constants.PREFS_KEY_RULES, RulesCodec.encode(list)).commit()
+        sp.edit().putString(Constants.PREFS_KEY_RULES, RulesCodec.encode(list, UiPrefs.logging(app)))
+            .commit()
     }
 
-    fun exportJson(list: List<TargetApp>): String = RulesCodec.encode(list)
+    fun exportJson(list: List<TargetApp>): String = RulesCodec.encode(list, UiPrefs.logging(app))
 
     fun importJson(text: String): MutableList<TargetApp>? {
         val list = RulesCodec.decode(text)
@@ -168,7 +167,7 @@ class RuleStore(context: Context) {
         const val MAX_BACKUPS = 5
 
         /** 内置规则版本：改动 DefaultRules 后加一，老用户下次启动会自动刷新内置规则。 */
-        private const val RULES_VERSION = 2
+        private const val RULES_VERSION = 10
         private const val KEY_RULES_VERSION = "rulesVersion"
     }
 

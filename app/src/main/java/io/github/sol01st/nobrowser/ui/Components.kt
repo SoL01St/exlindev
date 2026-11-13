@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.graphics.drawable.toBitmap
+import io.github.sol01st.nobrowser.core.LinkRule
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -372,18 +373,45 @@ fun InputDialog(
     }
 }
 
-/** 规则的完整编辑对话框：Activity 通配 + 取值方式。 */
+/** 规则的完整编辑对话框：匹配对象 + Activity 通配 + 取值方式。 */
 @Composable
 fun RuleEditDialog(
     initialActivity: String,
     initialKey: String,
+    initialScope: String = LinkRule.SCOPE_TARGET,
     onDismiss: () -> Unit,
-    onConfirm: (String, String) -> Unit,
+    onConfirm: (String, String, String) -> Unit,
 ) {
     var activity by remember { mutableStateOf(initialActivity) }
     var key by remember { mutableStateOf(initialKey) }
+    var scope by remember { mutableStateOf(initialScope) }
     AppDialog(onDismiss) {
         AppText("编辑规则", fontSize = 18.sp, fontWeight = FontWeight.Medium)
+        Spacer(Modifier.height(12.dp))
+        AppText(
+            "匹配对象",
+            fontSize = 12.sp,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DialogAction(
+                if (scope == LinkRule.SCOPE_CALLER) "✓ 入口（发起方）" else "入口（发起方）",
+                primary = scope == LinkRule.SCOPE_CALLER,
+                onClick = { scope = LinkRule.SCOPE_CALLER },
+            )
+            DialogAction(
+                if (scope == LinkRule.SCOPE_TARGET) "✓ 目标（网页容器）" else "目标（网页容器）",
+                primary = scope == LinkRule.SCOPE_TARGET,
+                onClick = { scope = LinkRule.SCOPE_TARGET },
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        AppText(
+            "入口 = 只有这些页面里点出去的链接才拦（推荐）；目标 = 按打开的网页 Activity 拦。",
+            fontSize = 11.sp,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
         Spacer(Modifier.height(12.dp))
         AppText(
             "Activity（支持 * 通配）",
@@ -391,7 +419,7 @@ fun RuleEditDialog(
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         )
         Spacer(Modifier.height(6.dp))
-        FieldBox(activity, "例如 *WebView*") { activity = it }
+        FieldBox(activity, "例如 com.tencent.mm.ui.chatting.ChattingUI") { activity = it }
         Spacer(Modifier.height(12.dp))
         AppText(
             "取值方式（ExAuto / ExDat / extras key）",
@@ -409,7 +437,7 @@ fun RuleEditDialog(
                 primary = true,
                 onClick = {
                     if (activity.isNotBlank() && key.isNotBlank()) {
-                        onConfirm(activity.trim(), key.trim())
+                        onConfirm(activity.trim(), key.trim(), scope)
                     }
                 },
             )
@@ -524,6 +552,7 @@ fun PageHeader(
     title: String,
     subtitle: String? = null,
     navigationIcon: (@Composable () -> Unit)? = null,
+    actions: (@Composable () -> Unit)? = null,
 ) {
     val barHeight = if (subtitle == null) 46.dp else 66.dp
     Row(
@@ -553,6 +582,9 @@ fun PageHeader(
                     maxLines = 1,
                 )
             }
+        }
+        if (actions != null) {
+            Box(contentAlignment = Alignment.BottomCenter) { actions() }
         }
     }
 }

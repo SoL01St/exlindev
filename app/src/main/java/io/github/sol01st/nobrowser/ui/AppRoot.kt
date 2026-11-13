@@ -73,6 +73,9 @@ sealed interface Route {
     data object About : Route
     data object Theme : Route
     data class Edit(val pkg: String) : Route
+
+    /** 模块日志页：只读展示 HookEngine 的判定日志。 */
+    data object Logs : Route
 }
 
 /** 路由层级，用于决定转场方向（进栈从右滑入，出栈从左滑入）。 */
@@ -339,6 +342,7 @@ fun AppRoot() {
                                 listState = settingsListState,
                                 onOpenAbout = { route = Route.About },
                                 onOpenTheme = { route = Route.Theme },
+                                onOpenLogs = { route = Route.Logs },
                                 onRestore = { restored ->
                                     persist(restored)
                                     scope.launch {
@@ -386,6 +390,8 @@ fun AppRoot() {
                             )
                         }
                     }
+
+                    is Route.Logs -> ModuleLogScreen(onBack = { route = Route.Root })
 
                     is Route.About -> AboutScreen(onBack = { route = Route.Root })
 

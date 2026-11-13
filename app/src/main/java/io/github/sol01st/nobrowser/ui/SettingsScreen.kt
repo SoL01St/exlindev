@@ -38,7 +38,6 @@ import androidx.compose.ui.unit.sp
 import io.github.sol01st.nobrowser.BuildConfig
 import io.github.sol01st.nobrowser.core.RulesCodec
 import io.github.sol01st.nobrowser.core.TargetApp
-import io.github.sol01st.nobrowser.data.Diagnostics
 import io.github.sol01st.nobrowser.data.RuleStore
 import io.github.sol01st.nobrowser.data.ScopeManager
 import kotlinx.coroutines.Dispatchers
@@ -75,6 +74,7 @@ fun SettingsScreen(
     listState: LazyListState,
     onOpenAbout: () -> Unit,
     onOpenTheme: () -> Unit,
+    onOpenLogs: () -> Unit,
     onRestore: (List<TargetApp>) -> Unit,
 ) {
     val context = LocalContext.current
@@ -145,19 +145,6 @@ fun SettingsScreen(
         pendingImport = parsed
     }
 
-    val diagLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("text/plain"),
-    ) { uri ->
-        if (uri != null) {
-            val ok = runCatching {
-                val text = Diagnostics.build(context, apps, moduleEnabled)
-                context.contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
-                    ?: error("no stream")
-            }.isSuccess
-            toast(if (ok) "诊断报告已导出" else "导出失败")
-        }
-    }
-
     Scaffold(
         containerColor = MiuixTheme.colorScheme.background,
         topBar = { PageHeader("设置") },
@@ -197,6 +184,12 @@ fun SettingsScreen(
                             null -> "读取失败（需要 root）"
                         },
                         endActions = { if (moduleEnabled != true) WarnDot() },
+                    )
+                    GroupDivider()
+                    BasicComponent(
+                        title = "模块日志",
+                        summary = "查看每次跳转的拦截 / 放行原因",
+                        onClick = onOpenLogs,
                     )
                 }
             }
@@ -255,25 +248,13 @@ fun SettingsScreen(
                 }
             }
 
-            // ===== 诊断 =====
-            item { SmallTitle("诊断") }
-            item {
-                GroupCard {
-                    BasicComponent(
-                        title = "导出诊断报告",
-                        summary = "环境 + 规则统计 + 最近注入日志，导出为 txt",
-                        onClick = { diagLauncher.launch(Diagnostics.defaultFileName()) },
-                    )
-                }
-            }
-
             // ===== 关于 =====
             item { SmallTitle("关于") }
             item {
                 GroupCard {
                     BasicComponent(
                         title = "版本 ${BuildConfig.VERSION_NAME}",
-                        summary = "使用说明、检查更新、GitHub 仓库",
+                        summary = "检查更新、GitHub 仓库",
                         onClick = onOpenAbout,
                     )
                 }

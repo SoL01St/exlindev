@@ -4,10 +4,8 @@ import android.app.Activity
 import android.app.Dialog
 import android.content.Intent
 import android.content.res.Configuration
-import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
@@ -16,7 +14,6 @@ import android.view.Window
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import io.github.sol01st.nobrowser.core.Constants
 import io.github.sol01st.nobrowser.core.DefaultRules
 import io.github.sol01st.nobrowser.core.LinkRule
@@ -28,22 +25,50 @@ import io.github.libxposed.api.XposedModule
 
 /**
  * 宿主进程内的拦截引擎。这里不能触碰 Compose / 模块 UI 的任何类。
+ *
+ * 判定模型（入口白名单）：
+ * 1. 应用配了 scope=caller 的规则时，只有登记过的发起方页面（聊天、朋友圈、评论区…）才进入判定，
+ *    其它入口一律放行——扫一扫、钱包账单、服务栏、生活服务、小程序这些必须在应用内完成的，
+ *    永远不需要写排除名单。
+ * 2. 应用没有 caller 规则时，退回按目标 Activity 精确匹配（兼容旧配置与暂未录到发起方的应用）。
+ * 3. 取 URL 只在指定字段里取，ExAuto 也只在目标是网页容器时才嗅探。
+ * 4. 扫码/长按识别二维码按「发起方类名 + 调用栈」识别，直接放行。
+ * 5. 交给浏览器前先把应用自家的外链中转页解包成真实地址。
  */
 internal object HookEngine {
 
     private const val TAG = "ExLinkNoBrowser"
-    private const val PRIMARY = 0xFF3482FF.toInt()
     private const val CONFIG_PATH = "/data/local/tmp/nxb_config.json"
     private val PROCEED = Any()
 
-    /** 扫一扫/扫码结果页：从这里打开的网页保持在应用内，不参与拦截。 */
-    private val SCANNER_HINTS = listOf("plugin.scanner", "scanner.ui", "qrcode", "scanui", "barcode")
+    /**
+     * 扫码 / 长按识别二维码的调用链特征。
+     * 微信里「聊天或朋友圈点链接」和「长按识别二维码」用的是同一个发起方（LauncherUI / SnsBrowseUI），
+     * 光看 caller 区分不开；但识别一定走扫码插件，栈里会出现这些类。
+     * QQ 则是发起方自己就叫 DispatchScanResultActivity。
+     */
+    private val SCAN_STACK_HINTS = listOf(
+        "plugin.scanner", "scanner.ui", "scanner", ".qr.", "qrcode", "qrscan",
+        "scanui", "barcode", "qbar", "scanresult", "scanactivity", "dispatchscan",
+    )
 
-    /** ExAuto 优先尝试的常见链接字段，避免把 Intent 里任意一个 http 串当成目标链接。 */
+    /** 嗅探时优先看的链接字段：这些 key 明确表达「要打开的网页」，命中就不必再猜。 */
     private val URL_KEYS = listOf(
         "url", "targetUrl", "target_url", "link", "jumpUrl", "jump_url",
-        "extraUrl", "webUrl", "redirectUrl", "loadUrl",
+        "extraUrl", "webUrl", "redirectUrl", "loadUrl", "rawUrl",
     )
+
+    /** 日志总开关（由配置顶层的 logging 字段下发），关掉后宿主进程不再写判定日志。 */
+    @Volatile
+    private var loggingEnabled = true
+
+    private fun d(msg: String) {
+        if (loggingEnabled) Log.d(TAG, msg)
+    }
+
+    private fun i(msg: String) {
+        if (loggingEnabled) Log.i(TAG, msg)
+    }
 
     @Volatile
     private var currentApp: TargetApp? = null
@@ -57,7 +82,7 @@ internal object HookEngine {
         val app = apps.firstOrNull { it.packageName == packageName && it.enabled } ?: return
         currentApp = app
         configMtime = configFileMtime()
-        Log.i(TAG, "attached to $packageName, rules=${app.rules.size}, ask=${app.askEachTime}")
+        i("attached to $packageName, rules=${app.rules.size}, ask=${app.askEachTime}")
         install(module, loader)
     }
 
@@ -77,7 +102,7 @@ internal object HookEngine {
         configMtime = mtime
         val apps = loadRules(module)
         currentApp = apps.firstOrNull { it.packageName == packageName && it.enabled }
-        Log.i(TAG, "config reloaded for $packageName, ask=${currentApp?.askEachTime}")
+        i("config reloaded for $packageName, ask=${currentApp?.askEachTime}")
     }
 
     private fun loadRules(module: XposedModule): List<TargetApp> {
@@ -87,6 +112,7 @@ internal object HookEngine {
             if (file.exists() && file.canRead()) file.readText() else null
         }.getOrNull()
         if (!fromFile.isNullOrBlank()) {
+            loggingEnabled = RulesCodec.loggingOf(fromFile)
             val parsed = RulesCodec.decode(fromFile)
             if (parsed.isNotEmpty()) return parsed
         }
@@ -94,6 +120,7 @@ internal object HookEngine {
             module.getRemotePreferences(Constants.PREFS_NAME)
                 .getString(Constants.PREFS_KEY_RULES, null)
         }.getOrNull()
+        loggingEnabled = RulesCodec.loggingOf(remote)
         val list = RulesCodec.decode(remote ?: DefaultRules.JSON)
         return if (list.isEmpty()) RulesCodec.decode(DefaultRules.JSON) else list
     }
@@ -123,7 +150,7 @@ internal object HookEngine {
         runCatching {
             val method = clazz.getDeclaredMethod(name, *params)
             module.hook(method).intercept(hooker)
-            Log.i(TAG, "hooked $name/${params.size}")
+            i("hooked $name/${params.size}")
         }.onFailure { Log.w(TAG, "hook $name failed: $it") }
     }
 
@@ -152,78 +179,133 @@ internal object HookEngine {
         if (intent.getBooleanExtra(Constants.EXTRA_GUARD, false)) return PROCEED
 
         val bundle = args.getOrNull(args.size - 1) as? Bundle
+        val pkg = activity.packageName
         val caller = activity.javaClass.name
         val target = intent.component?.className
 
-        // 扫一扫打开的网页留在应用内；从聊天/朋友圈点链接仍然照常拦截
-        val callerLower = caller.lowercase()
-        if (SCANNER_HINTS.any { callerLower.contains(it) }) {
-            Log.d(TAG, "skip(scanner) caller=$caller target=$target")
+        val hasCallerPolicy = app.rules.any { it.enabled && it.isCaller() }
+        val callerRules = app.callerRules().filter { it.matches(caller) }
+        val targetRules = app.targetRules()
+
+        val matched: List<LinkRule>
+        if (hasCallerPolicy) {
+            // 入口白名单：没登记的发起方一律放行（扫码、钱包账单、服务栏、小程序都走这里）
+            if (callerRules.isEmpty()) {
+                d("skip(no-entry) pkg=$pkg caller=$caller target=$target")
+                return PROCEED
+            }
+            // 配了目标容器限制时，目标也必须像网页容器，避免入口页面发起的原生跳转被误拦
+            if (targetRules.isNotEmpty() && (target == null || targetRules.none { it.matches(target) })) {
+                d("skip(target-mismatch) pkg=$pkg caller=$caller target=$target")
+                return PROCEED
+            }
+            matched = callerRules
+        } else {
+            if (target == null) {
+                d("skip(no-target) pkg=$pkg caller=$caller")
+                return PROCEED
+            }
+            matched = targetRules.filter { it.matches(target) }
+            if (matched.isEmpty()) {
+                d("skip(no-entry) pkg=$pkg caller=$caller target=$target")
+                return PROCEED
+            }
+        }
+
+        // 长按识别二维码打开网页：保持应用内打开，不弹窗
+        if (looksLikeScan(caller)) {
+            d("skip(scan) pkg=$pkg caller=$caller target=$target")
             return PROCEED
         }
 
-        // 只按目标 Activity 匹配。把发起方也算进来时，「网页里发起任意跳转」都会命中 WebView 通配规则
-        val candidates = ArrayList<String>(2)
-        if (target != null) candidates.add(target) else candidates.add(caller)
-
-        // 单条规则开关：关掉的规则不参与匹配
-        val rules = app.rules.filter { rule ->
-            rule.enabled && candidates.any { rule.matches(it) }
-        }
-        if (rules.isEmpty()) {
-            Log.d(TAG, "skip(no-rule) caller=$caller target=$target")
-            return PROCEED
-        }
-
-        val rawUrl = rules.asSequence()
+        val rawUrl = matched.asSequence()
             .mapNotNull { extractUrl(it, intent, bundle, target) }
             .mapNotNull { UrlUtil.normalize(it) }
             .firstOrNull()
         if (rawUrl == null) {
-            Log.d(TAG, "skip(no-url) caller=$caller target=$target keys=${rules.joinToString { it.extrasKey }}")
+            d("skip(no-url) pkg=$pkg caller=$caller target=$target keys=${matched.joinToString { it.extrasKey }}")
             return PROCEED
         }
-
         if (!rawUrl.startsWith("http")) return PROCEED
+
         val activeWhite = app.whiteUrls.filter { it !in app.disabledWhiteUrls }
         if (UrlUtil.matchWhite(rawUrl, activeWhite)) {
-            Log.i(TAG, "whitelisted: $rawUrl")
+            i("whitelisted pkg=$pkg url=$rawUrl")
             return PROCEED
         }
 
-        Log.i(TAG, "intercept caller=$caller target=$target url=$rawUrl")
+        // 闲鱼 / QQ 邮箱 / 钉钉会把外链包在自家域名下跳转，交给浏览器前解包成真实地址，
+        // 否则用户在浏览器里只会看到提示页或接口报错（如 QQ 邮箱的 ret -5002 Invalid url）
+        var openUrl = UrlUtil.unwrapRedirect(rawUrl)
+        if (openUrl != rawUrl) {
+            i("unwrap pkg=$pkg url=$rawUrl to=$openUrl")
+        } else if (UrlUtil.isBareRelay(rawUrl)) {
+            // QQ 邮箱的 xmsafejump、钉钉的 common_webview.html 都是「空壳中转页」：
+            // data 里只有页面地址，真实链接在 Intent 的其它字段里，反过去挖一次
+            val sniffed = pickRealUrl(intent, bundle, rawUrl)
+            i("relay-bare pkg=$pkg url=$rawUrl sniffed=${sniffed ?: "-"} httpKeys=${httpKeysOf(intent, bundle)}")
+            if (sniffed != null) openUrl = sniffed
+        }
+        i("intercept pkg=$pkg caller=$caller target=$target url=$openUrl")
+
         if (app.askEachTime) {
-            activity.runOnUiThread { showChooser(activity, intent, rawUrl) }
+            activity.runOnUiThread { showChooser(activity, intent, openUrl) }
         } else {
-            openExternal(activity, rawUrl)
+            openExternal(activity, openUrl)
         }
         return null
     }
 
+    /** 这次 startActivity 是不是由「扫码 / 识别二维码」触发的。 */
+    private fun looksLikeScan(caller: String): Boolean {
+        val c = caller.lowercase()
+        if (SCAN_STACK_HINTS.any { c.contains(it) }) return true
+        return runCatching {
+            Throwable().stackTrace.any { frame ->
+                val n = frame.className.lowercase()
+                SCAN_STACK_HINTS.any { n.contains(it) }
+            }
+        }.getOrDefault(false)
+    }
+
     /**
-     * 取值：优先按规则指定的 key 精确取，取不到自动退化到 ExAuto 全文嗅探，
-     * 这样应用改版换了 extras key 也不会直接失效。
+     * 取值策略：
+     * - ExDat：只用 intent.data；
+     * - ExAuto：data 优先，取不到时在网页容器里嗅探；
+     * - 其它：先按指定 key 取，再退化到 intent.data（部分版本的入口只把链接放在 data 上）。
      */
     private fun extractUrl(rule: LinkRule, intent: Intent, bundle: Bundle?, target: String?): String? {
-        fun sniff(): String? = findInIntent(intent) ?: bundle?.let { findInBundle(it) }
-        // 只有目标是 WebView / 浏览器类页面时才做全文嗅探；
-        // 否则页面上随便一个 extra 里的 http 串都会把原生跳转误判成打开网页
-        fun sniffIfWeb(): String? = if (targetLooksWeb(target)) sniff() else null
         return when (rule.extrasKey) {
-            Constants.KEY_EX_DAT -> intent.dataString ?: sniffIfWeb()
-            Constants.KEY_EX_AUTO -> intent.dataString
-                ?: commonKeyUrl(intent, bundle)
-                ?: sniffIfWeb()
-            else -> intent.getStringExtra(rule.extrasKey)
-                ?: bundle?.getString(rule.extrasKey)
-                ?: sniffIfWeb()
+            Constants.KEY_EX_DAT -> intent.dataString
+            Constants.KEY_EX_AUTO -> intent.dataString ?: strictSniff(intent, bundle, target)
+            else -> intent.getStringExtra(rule.extrasKey)?.takeIf { it.isNotBlank() }
+                ?: bundle?.getString(rule.extrasKey)?.takeIf { it.isNotBlank() }
+                ?: intent.dataString
         }
     }
 
-    private fun commonKeyUrl(intent: Intent, bundle: Bundle?): String? {
+    /**
+     * 受限嗅探：只对网页容器生效，取值顺序是
+     *   1. 常见链接字段（URL_KEYS）——明确表达「要打开哪个网页」，命中即用；
+     *   2. 退回 extras / bundle 里第一个 http 串（QQ 邮箱、贴吧这类会把 URL 塞进别的 key）。
+     * 不要求「整份 extras 里只有一个链接」：那个约束会把带附加参数的正常跳转判成不可信，
+     * 误拦风险改由「入口 caller + 目标 target」双重条件来兜。
+     */
+    private fun strictSniff(intent: Intent, bundle: Bundle?, target: String?): String? {
+        if (!targetLooksWeb(target)) return null
         for (key in URL_KEYS) {
-            intent.getStringExtra(key)?.let { UrlUtil.normalize(it) }?.let { return it }
-            bundle?.getString(key)?.let { UrlUtil.normalize(it) }?.let { return it }
+            UrlUtil.findUrl(intent.getStringExtra(key))?.let { return it }
+            UrlUtil.findUrl(bundle?.getString(key))?.let { return it }
+        }
+        intent.extras?.let { extras ->
+            for (key in extras.keySet()) {
+                UrlUtil.findUrl(runCatching { extras.get(key)?.toString() }.getOrNull())?.let { return it }
+            }
+        }
+        bundle?.let { b ->
+            for (key in b.keySet()) {
+                UrlUtil.findUrl(runCatching { b.get(key)?.toString() }.getOrNull())?.let { return it }
+            }
         }
         return null
     }
@@ -231,25 +313,55 @@ internal object HookEngine {
     private fun targetLooksWeb(target: String?): Boolean {
         if (target == null) return false
         val t = target.lowercase()
-        return t.contains("webview") || t.contains("browser") || t.contains("webactivity")
+        return t.contains("webview") || t.contains("browser") || t.contains("webactivity") ||
+            t.contains("webcontainer") || t.contains("immerse") || t.contains("hybrid")
     }
 
-    private fun findInIntent(intent: Intent): String? {
-        intent.dataString?.let { UrlUtil.findUrl(it) }?.let { return it }
-        val extras = intent.extras ?: return null
-        for (key in extras.keySet()) {
-            val value = runCatching { extras.get(key)?.toString() }.getOrNull() ?: continue
-            UrlUtil.findUrl(value)?.let { return it }
+    /**
+     * 空壳中转页兜底：递归挖 Intent / Bundle（含嵌套 Bundle）里的所有链接，
+     * 排除中转域名本身和当前 data，优先取名字像链接的字段（url / target / link…）。
+     * QQ 邮箱就把真实地址放在 arg_safe_check_params 这个嵌套 Bundle 的 url 里。
+     */
+    private fun pickRealUrl(intent: Intent, bundle: Bundle?, relayUrl: String): String? {
+        val candidates = ArrayList<Pair<String, String>>() // key -> url
+        fun walk(prefix: String, b: Bundle?, depth: Int) {
+            if (b == null || depth > 3) return
+            for (k in b.keySet()) {
+                val v = runCatching { b.get(k) }.getOrNull() ?: continue
+                if (v is Bundle) {
+                    walk("$prefix$k.", v, depth + 1)
+                    continue
+                }
+                val text = runCatching { v.toString() }.getOrNull() ?: continue
+                val url = UrlUtil.findUrl(text) ?: continue
+                if (url == relayUrl) continue
+                if (UrlUtil.isRelayHost(url)) continue
+                candidates.add("$prefix$k" to url)
+            }
         }
-        return null
+        walk("", intent.extras, 0)
+        walk("", bundle, 0)
+        if (candidates.isEmpty()) return null
+        val preferred = candidates.firstOrNull { (key, _) ->
+            key.substringAfterLast('.').lowercase() in URL_KEYS
+        }
+        return (preferred ?: candidates.first()).second
     }
 
-    private fun findInBundle(bundle: Bundle): String? {
-        for (key in bundle.keySet()) {
-            val value = runCatching { bundle.get(key)?.toString() }.getOrNull() ?: continue
-            UrlUtil.findUrl(value)?.let { return it }
+    /** 诊断用：列出 Intent/Bundle 里含 http 的字段名和值的前 80 个字符。 */
+    private fun httpKeysOf(intent: Intent, bundle: Bundle?): String {
+        val sb = StringBuilder()
+        fun scan(prefix: String, keys: Set<String>, get: (String) -> Any?) {
+            for (k in keys) {
+                val v = runCatching { get(k)?.toString() }.getOrNull() ?: continue
+                if (UrlUtil.findUrl(v) == null) continue
+                if (sb.isNotEmpty()) sb.append(',')
+                sb.append(prefix).append(k).append('=').append(v.take(80))
+            }
         }
-        return null
+        intent.extras?.let { scan("i.", it.keySet()) { k -> it.get(k) } }
+        bundle?.let { scan("b.", it.keySet()) { k -> it.get(k) } }
+        return if (sb.isEmpty()) "-" else sb.toString()
     }
 
     private fun openExternal(activity: Activity, url: String) {

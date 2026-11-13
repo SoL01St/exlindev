@@ -3,14 +3,29 @@ package io.github.sol01st.nobrowser.core
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** 单条拦截规则：activityName 支持 * / ? 通配，extrasKey 支持 ExDat（intent.data）与 ExAuto（自动嗅探）。 */
+/**
+ * 单条拦截规则。
+ *
+ * activityName 支持 * / ? 通配，extrasKey 支持 ExDat（intent.data）与 ExAuto（受限自动嗅探）。
+ *
+ * scope 决定这条规则匹配谁：
+ * - SCOPE_CALLER：匹配**发起方** Activity，是「入口白名单」。只有登记过的入口发起的跳转才参与判定，
+ *   没登记的（扫一扫、钱包账单、服务栏、小程序…）默认放行，不需要写排除名单。
+ * - SCOPE_TARGET：匹配**目标** Activity，用于「打开网页的容器」这一层的兜底/限制。
+ */
 data class LinkRule(
     var activityName: String,
     var extrasKey: String,
     /** 单条规则开关：关掉后这条规则不参与匹配。 */
     var enabled: Boolean = true,
+    /** 匹配对象：caller（发起方入口）/ target（目标容器），旧配置缺省为 target。 */
+    var scope: String = SCOPE_TARGET,
 ) {
     fun matches(activity: String): Boolean = globMatch(activityName, activity)
+
+    fun isCaller(): Boolean = scope.equals(SCOPE_CALLER, ignoreCase = true)
+
+    fun isTarget(): Boolean = !isCaller()
 
     private fun globMatch(pattern: String, text: String): Boolean {
         if (pattern.isEmpty()) return false
@@ -23,7 +38,7 @@ data class LinkRule(
             }
         }
         return runCatching {
-            Regex("^" + sb + "\$", RegexOption.IGNORE_CASE).matches(text)
+            Regex("^" + sb + "$", RegexOption.IGNORE_CASE).matches(text)
         }.getOrDefault(pattern.equals(text, ignoreCase = true))
     }
 
@@ -31,6 +46,12 @@ data class LinkRule(
         put("activityName", activityName)
         put("extrasKey", extrasKey)
         put("enabled", enabled)
+        put("scope", scope)
+    }
+
+    companion object {
+        const val SCOPE_CALLER = "caller"
+        const val SCOPE_TARGET = "target"
     }
 }
 
@@ -50,6 +71,12 @@ data class TargetApp(
     /** 常用应用，列表中优先显示。 */
     var frequent: Boolean = false,
 ) {
+    /** 入口白名单（scope=caller）。 */
+    fun callerRules(): List<LinkRule> = rules.filter { it.enabled && it.isCaller() }
+
+    /** 目标容器限制（scope=target）。 */
+    fun targetRules(): List<LinkRule> = rules.filter { it.enabled && it.isTarget() }
+
     fun toJson(): JSONObject = JSONObject().apply {
         put("appName", appName)
         put("packageName", packageName)
@@ -74,6 +101,8 @@ data class TargetApp(
                             activityName = r.optString("activityName"),
                             extrasKey = r.optString("extrasKey"),
                             enabled = r.optBoolean("enabled", true),
+                            // 旧配置没有 scope，按历史上的「目标匹配」解释，保证升级不改变行为
+                            scope = r.optString("scope").takeIf { it.isNotBlank() } ?: LinkRule.SCOPE_TARGET,
                         ),
                     )
                 }
@@ -105,15 +134,22 @@ data class TargetApp(
 
 object RulesCodec {
 
-    /** 规则文件格式版本，导入时用于兼容性判断。 */
-    const val SCHEMA_VERSION = 2
+    /** 规则文件格式版本，导入时用于兼容性判断。3 起链路规则带 scope。 */
+    const val SCHEMA_VERSION = 3
 
-    fun encode(apps: List<TargetApp>): String = JSONObject()
+    fun encode(apps: List<TargetApp>, logging: Boolean = true): String = JSONObject()
         .put("schemaVersion", SCHEMA_VERSION)
         .put("exportedAt", System.currentTimeMillis())
         .put("count", apps.size)
+        .put("logging", logging)
         .put("list", JSONArray().apply { apps.forEach { put(it.toJson()) } })
         .toString()
+
+    /** 日志总开关：缺省 true，老配置没有这个字段时继续记录。 */
+    fun loggingOf(json: String?): Boolean {
+        if (json.isNullOrBlank()) return true
+        return runCatching { JSONObject(json).optBoolean("logging", true) }.getOrDefault(true)
+    }
 
     fun decode(json: String?): MutableList<TargetApp> {
         val out = mutableListOf<TargetApp>()

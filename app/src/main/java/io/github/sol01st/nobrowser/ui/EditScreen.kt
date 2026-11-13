@@ -162,7 +162,7 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
                 ) {
                     BasicComponent(
                         title = rule.activityName,
-                        summary = "取值方式：" + describeKey(rule.extrasKey),
+                        summary = (if (rule.isCaller()) "入口 · " else "目标 · ") + "取值方式：" + describeKey(rule.extrasKey),
                         endActions = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Switch(
@@ -198,7 +198,7 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
             if (white.isEmpty()) {
                 item {
                     AppText(
-                        "还没有白名单。白名单里的域名会保持在应用内打开。",
+                        "还没有白名单。白名单里的域名会保持在应用内打开；写成 =mail.qq.com 表示只精确匹配这个域名（不含子域）。",
                         fontSize = 13.sp,
                         color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
                         modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 4.dp),
@@ -272,9 +272,14 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
         RuleEditDialog(
             initialActivity = rule.activityName,
             initialKey = rule.extrasKey,
+            initialScope = rule.scope,
             onDismiss = { editingRule = null },
-            onConfirm = { activity, key ->
-                commit(rulesNew = rules.map { if (it === rule) it.copy(activityName = activity, extrasKey = key) else it })
+            onConfirm = { activity, key, scope ->
+                commit(
+                    rulesNew = rules.map {
+                        if (it === rule) it.copy(activityName = activity, extrasKey = key, scope = scope) else it
+                    },
+                )
                 editingRule = null
             },
         )
@@ -284,9 +289,10 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
         RuleEditDialog(
             initialActivity = "",
             initialKey = "ExAuto",
+            initialScope = LinkRule.SCOPE_CALLER,
             onDismiss = { showRuleDialog = false },
-            onConfirm = { activity, key ->
-                commit(rulesNew = rules + LinkRule(activity, key))
+            onConfirm = { activity, key, scope ->
+                commit(rulesNew = rules + LinkRule(activity, key, scope = scope))
                 showRuleDialog = false
             },
         )
@@ -294,7 +300,7 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
     if (showWhiteDialog) {
         InputDialog(
             title = "添加白名单",
-            placeholder = "例如 qq.com",
+            placeholder = "qq.com 或 =mail.qq.com",
             onDismiss = { showWhiteDialog = false },
             onConfirm = { value ->
                 showWhiteDialog = false
@@ -305,7 +311,7 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
     editingHost?.let { host ->
         InputDialog(
             title = "编辑白名单域名",
-            placeholder = "例如 qq.com",
+            placeholder = "qq.com 或 =mail.qq.com",
             initial = host,
             onDismiss = { editingHost = null },
             onConfirm = { value ->
@@ -342,13 +348,20 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
     if (showTip) {
         SimpleDialog(
             title = "规则说明",
-            text = "取值方式\n" +
-                "· ExAuto：自动在 Intent 的 data、extras、Bundle 中寻找第一个 http 链接\n" +
-                "· ExDat：只读取 Intent.data\n" +
-                "· 其它：按对应 key 读取 extras 或 Bundle 的字符串\n\n" +
-                "匹配规则\n" +
-                "按「Intent 指向的目标 Activity」匹配（没有显式目标时退回按发起方匹配），" +
+            text = "匹配对象\n" +
+                "· 入口（发起方）：只有这些页面里点出去的链接才进入判定，推荐。没登记的入口" +
+                "（扫一扫、钱包账单、服务栏、小程序）一律放行。\n" +
+                "· 目标（网页容器）：按 Intent 指向的 Activity 匹配。应用配了入口规则时，" +
+                "目标规则只作为附加限制，必须同时命中。\n" +
                 "支持 * 和 ? 通配，不区分大小写。\n\n" +
+                "取值方式\n" +
+                "· ExDat：只读取 Intent.data\n" +
+                "· ExAuto：优先 Intent.data；取不到时在网页容器里嗅探\n" +
+                "· 其它：按对应 key 读取 extras 或 Bundle，取不到再退回 Intent.data\n\n" +
+                "白名单\n" +
+                "· 写 qq.com：相等或子域都放行（wx.qq.com 也算命中）\n" +
+                "· 写 =mail.qq.com：只放行这个域名本身，不含子域\n" +
+                "· 钉钉、贴吧、QQ 邮箱会把外链包在自家域名下中转，这类域名不要用后缀匹配\n\n" +
                 "单条开关\n" +
                 "每条规则和白名单右侧都有独立开关，关掉的条目立即不参与匹配。",
             onDismiss = { showTip = false },
