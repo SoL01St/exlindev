@@ -17,7 +17,7 @@
   <img src="docs/screenshot-home.jpg" width="300" alt="首页" />
 </p>
 
-**默认接管：QQ、微信、QQ邮箱、百度贴吧、钉钉、TIM、闲鱼。其他应用点右下角 `+` 添加。**
+**默认接管：QQ、微信、QQ邮箱、百度贴吧、钉钉、TIM、闲鱼。其他应用点右下角 `+` 添加，需自行添加规则。**
 
 ## 概况
 
@@ -43,7 +43,6 @@
 - **作用域双向同步**：LSPosed 与模块内的开关互相同步
 - **备份与恢复**：按时间点自选恢复，自动保留最近 5 份
 - **导入 / 导出**：JSON 格式，可从文件恢复
-- **诊断**：一键导出环境、规则统计与最近注入日志
 - **界面**：折叠顶栏、悬浮底栏、实时毛玻璃，跟随系统 / 浅色 / 深色
 
 ## 安装
@@ -54,6 +53,8 @@
 4. **首次接管某个应用后，需要在 LSPosed 作用域里对它重新勾选一次**
 
 ## 致谢
+
+拦截规则与整体思路来自 xloger/ExLink；界面基于 Miuix 组件库，毛玻璃效果使用 haze；模块框架为 libxposed API。
 
 - [xloger/ExLink](https://github.com/xloger/ExLink)
 - [libxposed/api](https://github.com/libxposed/api)
