@@ -1,14 +1,21 @@
 package io.github.sol01st.nobrowser.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.derivedStateOf
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -81,26 +88,31 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
     }
 
 
-    Scaffold(
+    val listState = rememberLazyListState()
+
+        val topHaze = rememberHazeState()
+    val density = LocalDensity.current
+    val collapse by remember(listState, density) {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) 1f
+            else (listState.firstVisibleItemScrollOffset / with(density) { 50.dp.toPx() }).coerceIn(0f, 1f)
+        }
+    }
+
+Scaffold(
         containerColor = MiuixTheme.colorScheme.background,
-        topBar = {
-            PageHeader(
-                title = app.appName,
-                subtitle = app.packageName,
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                },
-            )
-        },
+        contentWindowInsets = WindowInsets(0),
     ) { padding ->
+        Box(Modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .hazeSource(topHaze),
             contentPadding = PaddingValues(
                 start = 0.dp,
                 end = 0.dp,
-                top = padding.calculateTopPadding() + 4.dp,
+                top = 68.dp + 4.dp,
                 // 二级页没有底栏，底部只需要导航栏高度 + 一点呼吸空间
                 bottom = listBottomPadding(),
             ),
@@ -265,6 +277,18 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
                     )
                 }
             }
+        }
+        NxbTopBar(
+            title = app.appName,
+            subtitle = app.packageName,
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                }
+            },
+            collapse = collapse,
+            hazeState = topHaze,
+        )
         }
     }
 

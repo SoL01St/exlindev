@@ -1,6 +1,10 @@
 package io.github.sol01st.nobrowser.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.derivedStateOf
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.background
@@ -12,6 +16,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -40,6 +47,7 @@ import io.github.sol01st.nobrowser.core.RulesCodec
 import io.github.sol01st.nobrowser.core.TargetApp
 import io.github.sol01st.nobrowser.data.RuleStore
 import io.github.sol01st.nobrowser.data.ScopeManager
+import io.github.sol01st.nobrowser.data.ThemePrefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -50,6 +58,7 @@ import java.util.Locale
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /** 诊断结果进程内缓存：进出页面时不再重新检测，避免文案从“正在检查…”变回结果造成列表跳动。 */
@@ -73,7 +82,6 @@ fun SettingsScreen(
     moduleEnabled: Boolean?,
     listState: LazyListState,
     onOpenAbout: () -> Unit,
-    onOpenTheme: () -> Unit,
     onOpenLogs: () -> Unit,
     onRestore: (List<TargetApp>) -> Unit,
 ) {
@@ -145,19 +153,29 @@ fun SettingsScreen(
         pendingImport = parsed
     }
 
+    val topHaze = rememberHazeState()
+    val density = LocalDensity.current
+    val collapse by remember(listState, density) {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) 1f
+            else (listState.firstVisibleItemScrollOffset / with(density) { 50.dp.toPx() }).coerceIn(0f, 1f)
+        }
+    }
+
     Scaffold(
         containerColor = MiuixTheme.colorScheme.background,
-        topBar = { PageHeader("设置") },
+        contentWindowInsets = WindowInsets(0),
     ) { padding ->
+        Box(Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().hazeSource(topHaze),
             contentPadding = PaddingValues(
                 start = 0.dp,
                 end = 0.dp,
-                top = padding.calculateTopPadding() + 4.dp,
+                top = 50.dp + 4.dp,
                 // 底栏是浮层，不参与 Scaffold padding：这里显式让开底栏高度
-                bottom = listBottomPadding(AppBottomBarHeight + 24.dp),
+                bottom = listBottomPadding(100.dp),
             ),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
@@ -198,10 +216,15 @@ fun SettingsScreen(
             item { SmallTitle("外观") }
             item {
                 GroupCard {
-                    BasicComponent(
+                    OverlayDropdownPreference(
                         title = "主题模式",
-                        summary = themeTitle(ThemeState.mode),
-                        onClick = onOpenTheme,
+                        items = ThemeMode.entries.map { themeTitle(it) },
+                        selectedIndex = ThemeMode.entries.indexOf(ThemeState.mode),
+                        onSelectedIndexChange = { index ->
+                            val mode = ThemeMode.entries[index]
+                            ThemeState.mode = mode
+                            ThemePrefs.save(context, mode)
+                        },
                     )
                 }
             }
@@ -261,6 +284,12 @@ fun SettingsScreen(
             }
 
             item { Spacer(Modifier.height(8.dp)) }
+        }
+        NxbTopBar(
+            title = "设置",
+            collapse = collapse,
+            hazeState = topHaze,
+        )
         }
     }
 

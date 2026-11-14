@@ -1,31 +1,33 @@
 package io.github.sol01st.nobrowser.ui
 
 import android.content.Intent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.derivedStateOf
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.sol01st.nobrowser.data.InstalledApps
@@ -34,6 +36,7 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
@@ -57,59 +60,53 @@ fun AddAppScreen(
             .filter { query.isBlank() || it.label.contains(query, true) || it.pkg.contains(query, true) }
     }
 
-    Scaffold(
+    val listState = rememberLazyListState()
+
+        val topHaze = rememberHazeState()
+    val density = LocalDensity.current
+    val collapse by remember(listState, density) {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) 1f
+            else (listState.firstVisibleItemScrollOffset / with(density) { 50.dp.toPx() }).coerceIn(0f, 1f)
+        }
+    }
+
+Scaffold(
         containerColor = MiuixTheme.colorScheme.background,
-        topBar = {
-            PageHeader(
-                title = "添加应用",
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                },
-            )
-        },
+        contentWindowInsets = WindowInsets(0),
     ) { padding ->
+        Box(Modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .hazeSource(topHaze),
             contentPadding = PaddingValues(
                 start = 0.dp,
                 end = 0.dp,
-                top = padding.calculateTopPadding() + 4.dp,
+                top = 50.dp + 4.dp,
                 bottom = listBottomPadding(),
             ),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             item {
-                Box(
-                    Modifier
+                TextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = "搜索应用名或包名",
+                    useLabelAsPlaceholder = true,
+                    singleLine = true,
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Search,
+                            contentDescription = null,
+                            modifier = Modifier.padding(horizontal = 12.dp),
+                        )
+                    },
+                    modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MiuixTheme.colorScheme.secondaryVariant)
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                ) {
-                    BasicTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        textStyle = TextStyle(
-                            color = MiuixTheme.colorScheme.onSurface,
-                            fontSize = 15.sp,
-                            lineHeight = 21.sp,
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                        decorationBox = { inner ->
-                            if (query.isEmpty()) {
-                                AppText(
-                                    "搜索应用名或包名",
-                                    fontSize = 15.sp,
-                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                )
-                            }
-                            inner()
-                        },
-                    )
-                }
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                )
             }
             items(list, key = { it.pkg }) { item ->
                 NxbCard(
@@ -137,6 +134,17 @@ fun AddAppScreen(
                     )
                 }
             }
+        }
+        NxbTopBar(
+            title = "添加应用",
+            navigationIcon = {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                }
+            },
+            collapse = collapse,
+            hazeState = topHaze,
+        )
         }
     }
 

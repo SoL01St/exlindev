@@ -1,18 +1,25 @@
 package io.github.sol01st.nobrowser.ui
 
 import android.content.Intent
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.derivedStateOf
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.runtime.Composable
@@ -36,7 +43,6 @@ import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
-import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
@@ -85,25 +91,31 @@ fun AboutScreen(onBack: () -> Unit) {
         }
     }
 
-    Scaffold(
+    val listState = rememberLazyListState()
+
+        val topHaze = rememberHazeState()
+    val density = LocalDensity.current
+    val collapse by remember(listState, density) {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) 1f
+            else (listState.firstVisibleItemScrollOffset / with(density) { 50.dp.toPx() }).coerceIn(0f, 1f)
+        }
+    }
+
+Scaffold(
         containerColor = MiuixTheme.colorScheme.background,
-        topBar = {
-            PageHeader(
-                title = "关于",
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                },
-            )
-        },
+        contentWindowInsets = WindowInsets(0),
     ) { padding ->
+        Box(Modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .hazeSource(topHaze),
             contentPadding = PaddingValues(
                 start = 0.dp,
                 end = 0.dp,
-                top = padding.calculateTopPadding() + 4.dp,
+                top = 50.dp + 4.dp,
                 bottom = listBottomPadding(),
             ),
             verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -151,6 +163,17 @@ fun AboutScreen(onBack: () -> Unit) {
             }
 
             item { Spacer(Modifier.height(8.dp)) }
+        }
+            NxbTopBar(
+                collapse = collapse,
+                hazeState = topHaze,
+                title = "关于",
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    }
+                },
+            )
         }
     }
 }

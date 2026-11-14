@@ -1,13 +1,20 @@
 package io.github.sol01st.nobrowser.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.derivedStateOf
+import dev.chrisbanes.haze.HazeState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -19,7 +26,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.runtime.Composable
@@ -29,25 +35,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import io.github.sol01st.nobrowser.core.TargetApp
 import io.github.sol01st.nobrowser.data.InstalledApps
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
-import top.yukonga.miuix.kmp.basic.FloatingActionButton
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.PullToRefresh
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.basic.ListPopupColumn
+import top.yukonga.miuix.kmp.basic.PopupPositionProvider
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.window.WindowListPopup
 
 /** PullToRefresh 默认文案是英文，这里给出简体中文四态。 */
 private val RefreshTexts = listOf("下拉刷新", "松开刷新", "正在刷新…", "刷新完成")
@@ -71,6 +75,7 @@ fun AppsScreen(
     onRemoveApp: (String) -> Unit,
     onBuiltInLongPress: () -> Unit,
     onAdd: () -> Unit,
+    hazeState: HazeState,
 ) {
     val installedMap = installed.associateBy { it.pkg }
     val enabledCount = apps.count { it.enabled && it.packageName in installedMap }
@@ -81,18 +86,30 @@ fun AppsScreen(
 
     // 长按菜单：锚定到被长按的那一行
     var menuPkg by remember { mutableStateOf<String?>(null) }
-
+    // 顶栏自带一个 haze 源，和内容同级，模糊才能采样到
+    val topHaze = rememberHazeState()
+    val density = LocalDensity.current
+    // 连续折叠：滚过多少就折叠多少（阈值 50dp）
+    val collapse by remember(listState, density) {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) {
+                1f
+            } else {
+                (listState.firstVisibleItemScrollOffset / with(density) { 50.dp.toPx() })
+                    .coerceIn(0f, 1f)
+            }
+        }
+    }
     Box(Modifier.fillMaxSize()) {
         Scaffold(
             containerColor = MiuixTheme.colorScheme.background,
-            topBar = {
-                PageHeader(
-                    title = ScreenTitle,
-                    subtitle = if (installedLoaded) "已接管 $enabledCount 个应用" else "正在读取应用列表…",
-                )
-            },
+            contentWindowInsets = WindowInsets(0),
         ) { padding ->
-            Box(Modifier.fillMaxSize()) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .hazeSource(topHaze),
+            ) {
             PullToRefresh(
                 isRefreshing = refreshing,
                 onRefresh = onRefresh,
@@ -105,8 +122,8 @@ fun AppsScreen(
                     contentPadding = PaddingValues(
                         start = 0.dp,
                         end = 0.dp,
-                        top = padding.calculateTopPadding() + 4.dp,
-                        bottom = listBottomPadding(AppBottomBarHeight + 96.dp),
+                        top = 68.dp + 4.dp,
+                        bottom = listBottomPadding(100.dp),
                     ),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -156,44 +173,20 @@ fun AppsScreen(
                                 )
                             }
 
-                            // 菜单锚定在这一行的左下角，天然贴合，不用算窗口坐标
-                            if (menuPkg == app.packageName) {
-                                Popup(
-                                    alignment = Alignment.BottomStart,
-                                    offset = IntOffset(24, 2),
-                                    onDismissRequest = { menuPkg = null },
-                                    properties = PopupProperties(focusable = true),
-                                ) {
-                                    // 外层留出 padding，否则 Popup 窗口会把阴影裁掉
-                                    Box(Modifier.padding(16.dp)) {
-                                        val menuShape = RoundedCornerShape(18.dp)
-                                        Box(
-                                            Modifier
-                                                .width(186.dp)
-                                                .shadow(
-                                                    elevation = 20.dp,
-                                                    shape = menuShape,
-                                                    clip = false,
-                                                    ambientColor = Color.Black,
-                                                    spotColor = Color.Black,
-                                                )
-                                                .clip(menuShape)
-                                                .background(MiuixTheme.colorScheme.surface)
-                                                .border(
-                                                    1.dp,
-                                                    MiuixTheme.colorScheme.onSurface.copy(alpha = 0.22f),
-                                                    menuShape,
-                                                ),
-                                        ) {
-                                            BasicComponent(
-                                                title = "从首页移除",
-                                                onClick = {
-                                                    menuPkg = null
-                                                    onRemoveApp(app.packageName)
-                                                },
-                                            )
-                                        }
-                                    }
+                            // 窗口级列表弹层：锚定在这一行下方，位置由组件按父布局计算
+                            WindowListPopup(
+                                show = menuPkg == app.packageName,
+                                alignment = PopupPositionProvider.Align.Start,
+                                onDismissRequest = { menuPkg = null },
+                            ) {
+                                ListPopupColumn {
+                                    BasicComponent(
+                                        title = "从首页移除",
+                                        onClick = {
+                                            menuPkg = null
+                                            onRemoveApp(app.packageName)
+                                        },
+                                    )
                                 }
                             }
                         }
@@ -202,20 +195,15 @@ fun AppsScreen(
                 }
             }
 
-                // 底栏是浮层，FAB 自己让开底栏高度 + 手势条
-                Box(
-                    Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 20.dp, bottom = AppBottomBarHeight + 16.dp)
-                        .navigationBarsPadding(),
-                ) {
-                    FloatingActionButton(onClick = onAdd) {
-                        Icon(Icons.Default.Add, contentDescription = "添加应用")
-                    }
-                }
             }
         }
 
+        NxbTopBar(
+            title = ScreenTitle,
+            subtitle = if (installedLoaded) "已接管 $enabledCount 个应用" else "正在读取应用列表…",
+            collapse = collapse,
+            hazeState = topHaze,
+        )
     }
 }
 

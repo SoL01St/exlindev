@@ -97,9 +97,10 @@ dependencies {
     implementation(compose.foundation)
     implementation(compose.ui)
     implementation("androidx.compose.material:material-icons-core:1.7.8")
-    implementation("androidx.activity:activity-compose:1.10.1")
+    implementation("androidx.activity:activity-compose:1.12.4")
     implementation("androidx.core:core-ktx:1.16.0")
-    implementation("top.yukonga.miuix.kmp:miuix-ui:0.9.0")
+    implementation("top.yukonga.miuix.kmp:miuix-ui:0.9.3")
+    implementation("top.yukonga.miuix.kmp:miuix-preference:0.9.3")
     // 真毛玻璃：提示条采样自己下层的内容再模糊（Android 12+ 走 RenderEffect，低版本自动回退成半透明底）
     implementation("dev.chrisbanes.haze:haze:1.6.10")
 

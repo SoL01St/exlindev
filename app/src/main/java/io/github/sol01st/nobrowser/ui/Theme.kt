@@ -13,6 +13,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
@@ -63,16 +64,21 @@ private fun Context.findActivity(): ComponentActivity? {
 fun NxbTheme(content: @Composable () -> Unit) {
     val dark = currentIsDark()
     SystemBarsAppearance(dark)
+    // 顶栏大标题用 Miuix 的 title1（默认 32sp），这里压到 26sp，和原来的 PageHeader 一致
+    val baseTextStyles = MiuixTheme.textStyles
     CompositionLocalProvider(LocalDarkTheme provides dark) {
         MiuixTheme(
-        colors = if (dark) {
+            textStyles = baseTextStyles.copy(
+                title1 = baseTextStyles.title1.copy(fontSize = 26.sp),
+            ),
+            colors = if (dark) {
             darkColorScheme()
         } else {
             // 参考图配色：页面浅灰底，卡片纯白，分组边界可见
             // 背景比 iOS 的 F2F2F7 再深一档：卡片水平留白只有 12dp、行间距 6dp，
             // 光靠原来那点色差在低对比屏上几乎看不出卡片边界。
             lightColorScheme().copy(
-                background = Color(0xFFEAECF1),
+                background = Color(0xFFF7F7F7),
                 surface = Color(0xFFFFFFFF),
             )
         },

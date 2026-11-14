@@ -1,30 +1,27 @@
 package io.github.sol01st.nobrowser.ui
 
 import android.content.ClipData
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.derivedStateOf
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
@@ -39,16 +36,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
 import io.github.sol01st.nobrowser.data.ModuleLog
 import io.github.sol01st.nobrowser.data.ModuleLogEntry
 import io.github.sol01st.nobrowser.data.RuleStore
@@ -58,11 +49,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.basic.DropdownEntry
+import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Switch
+import top.yukonga.miuix.kmp.menu.WindowIconCascadingDropdownMenu
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -78,7 +72,6 @@ fun ModuleLogScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val pm = remember { context.packageManager }
     val store = remember { RuleStore(context) }
-    val density = LocalDensity.current
 
     var loading by remember { mutableStateOf(false) }
     var rootOk by remember { mutableStateOf(true) }
@@ -87,7 +80,6 @@ fun ModuleLogScreen(onBack: () -> Unit) {
     var autoRefresh by remember { mutableStateOf(UiPrefs.autoRefresh(context)) }
     var logging by remember { mutableStateOf(UiPrefs.logging(context)) }
     var loaded by remember { mutableStateOf(false) }
-    var showMenu by remember { mutableStateOf(false) }
 
     // 包名 → 应用名缓存，避免每条记录都去问 PackageManager
     val appLabels = remember { mutableStateMapOf<String, String>() }
@@ -175,79 +167,31 @@ fun ModuleLogScreen(onBack: () -> Unit) {
         if (!autoRefresh) refresh()
     }
 
-    val topInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val menuOffsetY = with(density) { (topInset + 54.dp).roundToPx() }
+    val listState = rememberLazyListState()
 
-    Scaffold(
+        val topHaze = rememberHazeState()
+    val density = LocalDensity.current
+    val collapse by remember(listState, density) {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) 1f
+            else (listState.firstVisibleItemScrollOffset / with(density) { 50.dp.toPx() }).coerceIn(0f, 1f)
+        }
+    }
+
+Scaffold(
         containerColor = MiuixTheme.colorScheme.background,
-        topBar = {
-            PageHeader(
-                title = "模块日志",
-                subtitle = if (loaded) "共 ${entries.size} 条 · 拦截 ${entries.count { it.intercepted }} 条" else null,
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                actions = {
-                    Box {
-                        Row {
-                            IconButton(onClick = { refresh() }) {
-                                Icon(Icons.Default.Refresh, contentDescription = "刷新")
-                            }
-                            IconButton(onClick = { showMenu = true }) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "更多")
-                            }
-                        }
-                        if (showMenu) {
-                            Popup(
-                                alignment = Alignment.TopEnd,
-                                offset = IntOffset(0, menuOffsetY),
-                                onDismissRequest = { showMenu = false },
-                                properties = PopupProperties(focusable = true),
-                            ) {
-                                DropdownCard {
-                                    DropdownRow(
-                                        title = "只看拦截",
-                                        subtitle = if (interceptedOnly) "已开启" else "已关闭",
-                                    ) {
-                                        interceptedOnly = !interceptedOnly
-                                        showMenu = false
-                                    }
-                                    DropdownDivider()
-                                    DropdownRow(
-                                        title = "复制到剪贴板",
-                                        subtitle = "当前 ${shown.size} 条",
-                                    ) {
-                                        showMenu = false
-                                        copyAll()
-                                    }
-                                    DropdownDivider()
-                                    DropdownRow(
-                                        title = "导出为 txt",
-                                        subtitle = "当前 ${shown.size} 条",
-                                    ) {
-                                        showMenu = false
-                                        if (shown.isEmpty()) {
-                                            HintState.show("没有可导出的内容")
-                                        } else {
-                                            exportLauncher.launch(ModuleLog.defaultFileName())
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-            )
-        },
+        contentWindowInsets = WindowInsets(0),
     ) { padding ->
+        Box(Modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .hazeSource(topHaze),
             contentPadding = PaddingValues(
                 start = 0.dp,
                 end = 0.dp,
-                top = padding.calculateTopPadding() + 4.dp,
+                top = 68.dp + 4.dp,
                 bottom = listBottomPadding(),
             ),
             verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -392,48 +336,52 @@ fun ModuleLogScreen(onBack: () -> Unit) {
                 }
             }
         }
+            NxbTopBar(
+                collapse = collapse,
+                hazeState = topHaze,
+                title = "模块日志",
+                subtitle = if (loaded) "共 ${entries.size} 条 · 拦截 ${entries.count { it.intercepted }} 条" else null,
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { refresh() }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
+                    }
+                    WindowIconCascadingDropdownMenu(
+                        entry = DropdownEntry(
+                            items = listOf(
+                                DropdownItem(
+                                    text = "只看拦截",
+                                    summary = if (interceptedOnly) "已开启" else "已关闭",
+                                    selected = interceptedOnly,
+                                    onClick = { interceptedOnly = !interceptedOnly },
+                                ),
+                                DropdownItem(
+                                    text = "复制到剪贴板",
+                                    summary = "当前 ${shown.size} 条",
+                                    onClick = { copyAll() },
+                                ),
+                                DropdownItem(
+                                    text = "导出为 txt",
+                                    summary = "当前 ${shown.size} 条",
+                                    onClick = {
+                                        if (shown.isEmpty()) {
+                                            HintState.show("没有可导出的内容")
+                                        } else {
+                                            exportLauncher.launch(ModuleLog.defaultFileName())
+                                        }
+                                    },
+                                ),
+                            ),
+                        ),
+                    ) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                    }
+                },
+            )
+        }
     }
-}
-
-/** 锚定在右上角按钮下方的浮动卡片菜单，外观对齐 Miuix 的下拉菜单。 */
-@Composable
-private fun DropdownCard(content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        Modifier
-            .padding(end = 12.dp, top = 2.dp)
-            .width(224.dp)
-            .shadow(14.dp, RoundedCornerShape(20.dp))
-            .clip(RoundedCornerShape(20.dp))
-            .background(MiuixTheme.colorScheme.surface)
-            .padding(vertical = 6.dp),
-        content = content,
-    )
-}
-
-@Composable
-private fun DropdownRow(title: String, subtitle: String, onClick: () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 10.dp),
-    ) {
-        AppText(title, fontSize = 15.sp, color = MiuixTheme.colorScheme.onSurface)
-        AppText(
-            subtitle,
-            fontSize = 11.sp,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-        )
-    }
-}
-
-@Composable
-private fun DropdownDivider() {
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 18.dp, vertical = 4.dp)
-            .height(0.5.dp)
-            .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.12f)),
-    )
 }

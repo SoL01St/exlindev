@@ -1,6 +1,14 @@
 package io.github.sol01st.nobrowser.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -10,9 +18,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Box
@@ -21,8 +27,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -39,10 +43,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.chrisbanes.haze.HazeState
@@ -59,7 +63,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.basic.NavigationBar
 import top.yukonga.miuix.kmp.basic.NavigationBarItem
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -71,7 +74,6 @@ sealed interface Route {
     data object Root : Route
     data object Add : Route
     data object About : Route
-    data object Theme : Route
     data class Edit(val pkg: String) : Route
 
     /** 模块日志页：只读展示 HookEngine 的判定日志。 */
@@ -333,6 +335,7 @@ fun AppRoot() {
                                     tap()
                                     route = Route.Add
                                 },
+                                hazeState = hazeState,
                             )
                         } else {
                             SettingsScreen(
@@ -341,7 +344,6 @@ fun AppRoot() {
                                 moduleEnabled = moduleEnabled,
                                 listState = settingsListState,
                                 onOpenAbout = { route = Route.About },
-                                onOpenTheme = { route = Route.Theme },
                                 onOpenLogs = { route = Route.Logs },
                                 onRestore = { restored ->
                                     persist(restored)
@@ -395,7 +397,6 @@ fun AppRoot() {
 
                     is Route.About -> AboutScreen(onBack = { route = Route.Root })
 
-                    is Route.Theme -> ThemeScreen(onBack = { route = Route.Root })
                 }
             }
 
@@ -417,8 +418,12 @@ fun AppRoot() {
         if (route is Route.Root) {
             BottomBar(
                 current = tab,
-                modifier = Modifier.align(Alignment.BottomCenter),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .zIndex(1f),
                 onSelect = { tab = it },
+                onAdd = { route = Route.Add },
+                hazeState = hazeState,
             )
         }
     }
@@ -457,60 +462,82 @@ private fun BottomBar(
     current: Tab,
     modifier: Modifier = Modifier,
     onSelect: (Tab) -> Unit,
+    onAdd: () -> Unit,
+    hazeState: HazeState,
 ) {
-    Column(
-        modifier
+    val surface = MiuixTheme.colorScheme.surface
+    Row(
+        modifier = modifier
             .fillMaxWidth()
-            .background(MiuixTheme.colorScheme.surface),
+            .navigationBarsPadding()
+            .padding(horizontal = 24.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        // 贴底通栏：只用一条 0.5dp 分隔线分界，不要再叠圆角和投影
-        HorizontalDivider(
-            thickness = 0.5.dp,
-            color = MiuixTheme.colorScheme.onSurface.copy(
-                alpha = if (LocalDarkTheme.current) 0.16f else 0.10f,
-            ),
-        )
         Row(
             Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .height(AppBottomBarHeight),
+                .weight(1f)
+                .height(64.dp)
+                .shadow(2.dp, RoundedCornerShape(32.dp))
+                .clip(RoundedCornerShape(32.dp))
+                .hazeEffect(state = hazeState) {
+                    blurRadius = 24.dp
+                    backgroundColor = surface.copy(alpha = 0.45f)
+                    tints = listOf(HazeTint(surface.copy(alpha = 0.45f)))
+                    noiseFactor = 0.02f
+                }
+                .border(0.5.dp, MiuixTheme.colorScheme.onSurface.copy(alpha = 0.12f), RoundedCornerShape(32.dp)),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TabButton("首页", Icons.Default.Home, current == Tab.Apps, Modifier.weight(1f)) { onSelect(Tab.Apps) }
-            TabButton("设置", Icons.Default.Settings, current == Tab.Settings, Modifier.weight(1f)) { onSelect(Tab.Settings) }
+            TabItem("首页", Icons.Default.Home, current == Tab.Apps) { onSelect(Tab.Apps) }
+            TabItem("设置", Icons.Default.Settings, current == Tab.Settings) { onSelect(Tab.Settings) }
+        }
+        Box(
+            Modifier
+                .size(64.dp)
+                .shadow(2.dp, CircleShape)
+                .clip(CircleShape)
+                .hazeEffect(state = hazeState) {
+                    blurRadius = 24.dp
+                    backgroundColor = surface.copy(alpha = 0.45f)
+                    tints = listOf(HazeTint(surface.copy(alpha = 0.45f)))
+                    noiseFactor = 0.02f
+                }
+                .border(0.5.dp, MiuixTheme.colorScheme.onSurface.copy(alpha = 0.12f), CircleShape)
+                .clickable { onAdd() },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                Icons.Default.Add,
+                contentDescription = "添加应用",
+                tint = MiuixTheme.colorScheme.onSurface,
+            )
         }
     }
 }
 
 @Composable
-private fun TabButton(
+private fun TabItem(
     label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     selected: Boolean,
-    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val color = if (selected) {
-        MiuixTheme.colorScheme.primary
+        MiuixTheme.colorScheme.onSurface
     } else {
-        MiuixTheme.colorScheme.onSurfaceVariantSummary
+        MiuixTheme.colorScheme.onSurface.copy(alpha = 0.4f)
     }
     Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(18.dp))
-            .clickable { onClick() }
-            .padding(vertical = 4.dp),
+        Modifier
+            .clip(RoundedCornerShape(24.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(icon, contentDescription = label, tint = color)
-        androidx.compose.foundation.layout.Spacer(Modifier.height(2.dp))
-        AppText(
-            label,
-            fontSize = 11.sp,
-            color = color,
-            fontWeight = if (selected) FontWeight.Medium else null,
-        )
+        Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.height(2.dp))
+        AppText(label, fontSize = 11.sp, color = color)
     }
 }
