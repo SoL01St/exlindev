@@ -37,7 +37,9 @@ sh /data/local/tmp/eta/build_flindev.sh
 
 ### 踩过的坑（别重犯）
 
-1. **不能用 Gradle 9.x**。`/opt/gradle-9.9.1` 存在，但 AGP 8.13.2 与 Gradle ≥ 9.6 不兼容（报 `InternalProblems` 已移除）。脚本里曾被人改成 9.9.1，编译必挂。
+1. **只能用 Gradle 8.14.3**。AGP 8.13.2 与 Gradle ≥ 9.6 不兼容（报 `InternalProblems` 已移除）。
+   曾经装过的 `/opt/gradle-9.9.1` 及其缓存（798M）已于 2026-11-14 删除，
+   现在 `/opt` 下只有 `gradle-8.14.3`。若将来需要 Gradle 9，必须同时升级 AGP，不能只换 Gradle。
 2. **aapt2 必须走 qemu 包装**。ARM 上跑 x86_64 的 aapt2，需要在 `/root/.gradle/gradle.properties` 里有：
    ```
    android.aapt2FromMavenOverride=/opt/android-sdk/build-tools/36.0.0/aapt2
