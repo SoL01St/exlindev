@@ -54,12 +54,10 @@
 
 ## 致谢
 
-拦截规则与整体思路来自 xloger/ExLink；界面基于 Miuix 组件库，毛玻璃效果使用 haze；模块框架为 libxposed API。
-
-- [xloger/ExLink](https://github.com/xloger/ExLink)
-- [libxposed/api](https://github.com/libxposed/api)
-- [compose-miuix-ui/miuix](https://github.com/compose-miuix-ui/miuix)
-- [chrisbanes/haze](https://github.com/chrisbanes/haze)
+- 拦截规则与整体思路：[xloger/ExLink](https://github.com/xloger/ExLink)
+- 模块框架：[libxposed/api](https://github.com/libxposed/api)
+- 界面组件：[compose-miuix-ui/miuix](https://github.com/compose-miuix-ui/miuix)
+- 毛玻璃效果：[chrisbanes/haze](https://github.com/chrisbanes/haze)
 
 ## License
 
