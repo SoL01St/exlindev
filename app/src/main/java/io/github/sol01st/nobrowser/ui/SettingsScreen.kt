@@ -7,11 +7,8 @@ import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -28,15 +25,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -45,29 +38,19 @@ import androidx.compose.ui.unit.sp
 import io.github.sol01st.nobrowser.BuildConfig
 import io.github.sol01st.nobrowser.core.RulesCodec
 import io.github.sol01st.nobrowser.core.TargetApp
+import io.github.sol01st.nobrowser.data.LauncherIconManager
 import io.github.sol01st.nobrowser.data.RuleStore
-import io.github.sol01st.nobrowser.data.ScopeManager
 import io.github.sol01st.nobrowser.data.ThemePrefs
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-
-/** 诊断结果进程内缓存：进出页面时不再重新检测，避免文案从“正在检查…”变回结果造成列表跳动。 */
-private object DiagCache {
-    var rootOk: Boolean? = null
-    var scopeCount: Int? = null
-    var checked: Boolean = false
-    var checkedAt: Long = 0
-}
 
 private fun themeTitle(mode: ThemeMode): String = when (mode) {
     ThemeMode.SYSTEM -> "跟随系统"
@@ -79,47 +62,23 @@ private fun themeTitle(mode: ThemeMode): String = when (mode) {
 fun SettingsScreen(
     apps: List<TargetApp>,
     store: RuleStore,
-    moduleEnabled: Boolean?,
     listState: LazyListState,
     onOpenAbout: () -> Unit,
     onOpenLogs: () -> Unit,
     onRestore: (List<TargetApp>) -> Unit,
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
 
     fun toast(msg: String) = HintState.show(msg)
 
-    var rootOk by remember { mutableStateOf(DiagCache.rootOk) }
-    var scopeCount by remember { mutableStateOf(DiagCache.scopeCount) }
+    // 桌面图标开关的当前状态直接从 PackageManager 读，不额外存 pref，避免和系统不同步
+    var launcherVisible by remember { mutableStateOf(LauncherIconManager.isVisible(context)) }
     var pendingImport by remember { mutableStateOf<List<TargetApp>?>(null) }
     var pendingRestore by remember { mutableStateOf<List<TargetApp>?>(null) }
     // 备份文件列表 + 选择弹窗：恢复时可以自己挑时间点
     var backupFiles by remember { mutableStateOf(store.backups()) }
     var backupPicker by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<File?>(null) }
-
-    fun refreshDiag(notify: Boolean = false) {
-        scope.launch {
-            val (ok, count) = withContext(Dispatchers.IO) {
-                ScopeManager.hasRoot() to ScopeManager.readScope(context)?.size
-            }
-            rootOk = ok
-            scopeCount = count
-            DiagCache.rootOk = ok
-            DiagCache.scopeCount = count
-            DiagCache.checked = true
-            DiagCache.checkedAt = System.currentTimeMillis()
-            if (notify && !ok) toast("请在 KernelSU 里允许本应用使用 root")
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        // 先用进程内缓存把首屏渲染出来，再在后台刷新；
-        // 未授权时 su 最多等 8 秒才失败，界面不会因此停在「正在检查…」上
-        if (System.currentTimeMillis() - DiagCache.checkedAt < 30_000) return@LaunchedEffect
-        refreshDiag()
-    }
 
     // ---------- 导出 / 导入 / 备份 ----------
     val exportLauncher = rememberLauncherForActivityResult(
@@ -179,39 +138,6 @@ fun SettingsScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            // ===== 运行状态（置顶：未授权 root / 未启用模块时不用下滑就能看到） =====
-            item { SmallTitle("运行状态") }
-            item {
-                GroupCard {
-                    BasicComponent(
-                        title = "Root 权限",
-                        summary = when (rootOk) {
-                            true -> "已授权，点击可重新检测"
-                            false -> "未授权 · 点一下申请（KernelSU 会弹窗）"
-                            null -> "正在检查…"
-                        },
-                        endActions = { if (rootOk == false) WarnDot() },
-                        onClick = { refreshDiag(notify = true) },
-                    )
-                    GroupDivider()
-                    BasicComponent(
-                        title = "模块状态",
-                        summary = when (moduleEnabled) {
-                            true -> "LSPosed 已启用 · 作用域 ${scopeCount ?: "-"} 个应用"
-                            false -> "LSPosed 未启用本模块"
-                            null -> "读取失败（需要 root）"
-                        },
-                        endActions = { if (moduleEnabled != true) WarnDot() },
-                    )
-                    GroupDivider()
-                    BasicComponent(
-                        title = "模块日志",
-                        summary = "查看每次跳转的拦截 / 放行原因",
-                        onClick = onOpenLogs,
-                    )
-                }
-            }
-
             // ===== 外观 =====
             item { SmallTitle("外观") }
             item {
@@ -266,6 +192,44 @@ fun SettingsScreen(
                         onClick = {
                             backupFiles = store.backups()
                             if (backupFiles.isEmpty()) toast("暂无备份") else backupPicker = true
+                        },
+                    )
+                }
+            }
+
+            // ===== 日志 =====
+            item { SmallTitle("日志") }
+            item {
+                GroupCard {
+                    BasicComponent(
+                        title = "模块日志",
+                        summary = "查看每次跳转的拦截 / 放行原因（读 logcat 需要 root）",
+                        onClick = onOpenLogs,
+                    )
+                }
+            }
+
+            // ===== 启动入口 =====
+            item { SmallTitle("启动入口") }
+            item {
+                GroupCard {
+                    BasicComponent(
+                        title = "显示桌面图标",
+                        summary = if (launcherVisible) {
+                            "关闭后桌面不再显示图标，仍可从 LSPosed「模块设置 → 打开」进入"
+                        } else {
+                            "已隐藏 · 请从 LSPosed 模块设置右下角「打开」进入本应用"
+                        },
+                        endActions = {
+                            Switch(
+                                checked = launcherVisible,
+                                onCheckedChange = { next ->
+                                    val ok = LauncherIconManager.setVisible(context, next)
+                                    launcherVisible = LauncherIconManager.isVisible(context)
+                                    // 成功不打扰，只在切换失败时提示
+                                    if (!ok) toast("切换失败，请重试")
+                                },
+                            )
                         },
                     )
                 }
@@ -420,15 +384,4 @@ private fun BackupRow(
             modifier = Modifier.padding(start = 8.dp),
         )
     }
-}
-
-/** 异常状态的红点提示（未授权 root / 模块未启用）。 */
-@Composable
-private fun WarnDot() {
-    Box(
-        Modifier
-            .size(8.dp)
-            .clip(CircleShape)
-            .background(Color(0xFFE5484D)),
-    )
 }

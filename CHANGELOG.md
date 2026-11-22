@@ -1,5 +1,40 @@
 # 更新日志
 
+## 5.0.3
+
+版本号统一：`build.gradle.kts`、根目录 `module.prop`、README 徽章与概况表此前不同步（module.prop 还停在 5.0.1 / 33），现全部对齐到 5.0.3 / 35。
+
+### 新增
+
+- **隐藏桌面图标**：设置页新增「显示桌面图标」开关。关闭只禁用 `.Launcher`，不影响对外的
+  `.ui.EntryActivity`——它带 `de.robv.android.xposed.category.MODULE_SETTINGS`，
+  也就是 LSPosed 管理器解析「模块设置 / 右下角打开」时找的入口，隐藏图标后照样能进。
+- **添加应用时弹授权读取应用**：进入添加页会主动读一次应用列表（触发系统授权框），
+  拿到的列表为空时弹出应用内引导，可直接跳到权限页，从设置返回后自动重新检测。
+
+### 改进
+
+- **核心链路不再依赖 root**：接入 libxposed API 102 的 service 通道，作用域读写
+  （`getScope` / `requestScope` / `removeScope`）与配置下发（`getRemotePreferences`）
+  全部交给 LSPosed，不再自带 sqlite3 去改 `modules_config.db`。`assets/nxbin`（2.7 MB）已删除。
+- 宿主侧配置读取顺序改为「框架远程配置 → 老文件通道 → 内置默认规则」，
+  按内容指纹判断变化，改完设置下一次点链接就生效，不需要杀进程。
+- 设置页精简：去掉「运行状态」诊断区（不再展示框架名 / API / 注入进程数），顺序调整为
+  外观 → 规则 → 模块日志 → 启动入口（显示桌面图标）→ 关于；桌面图标开关不再弹提示条。
+- `MainActivity` 不再导出，只留 `EntryActivity` 一个对外入口。
+- 保留 `QUERY_ALL_PACKAGES`（系统据此弹「读取应用列表」授权）与检查更新。
+
+### 修复
+
+- QQ 里选「手机浏览器打开」后还会弹「即将离开QQ 打开其他应用」：QQ 换掉了 `Instrumentation`，
+  在 `execStartActivity` 里做二次确认，`Activity` / `Application context` 的 `startActivity`
+  都会被它拦一道。改为反射 `ActivityTaskManager.getService()` 直接发 Binder 请求启动外部应用，
+  绕开应用层检查；失败自动回退到 context 启动。
+
+### 说明
+
+- 模块日志页仍用 root 读 logcat（应用没有 `READ_LOGS`），没授权 root 只影响这一个页面。
+
 ## 5.0.2
 
 判定逻辑改为「入口白名单」：只拦登记过的发起方点出的链接，扫码、钱包、服务页等默认放行。

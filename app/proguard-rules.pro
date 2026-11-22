@@ -9,6 +9,12 @@
 -keep class io.github.sol01st.nobrowser.hook.** { *; }
 -keep class io.github.sol01st.nobrowser.core.** { *; }
 
+# LSPosed service 通道：provider 会被系统按类名实例化，AIDL 与 remote preferences
+# 跨进程使用，任何混淆/裁剪都会让作用域与配置下发失效。
+-keep class io.github.libxposed.service.** { *; }
+-keep interface io.github.libxposed.service.** { *; }
+-dontwarn io.github.libxposed.service.**
+
 # Miuix / Compose 保守保留
 -keep class top.yukonga.miuix.** { *; }
 -dontwarn top.yukonga.miuix.**

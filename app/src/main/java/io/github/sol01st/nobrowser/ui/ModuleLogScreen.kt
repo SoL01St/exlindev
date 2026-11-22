@@ -135,7 +135,7 @@ fun ModuleLogScreen(onBack: () -> Unit) {
                 ScopeManager.publishConfig(context, store.exportJson(store.load()))
             }
             if (!ok) {
-                HintState.show("配置写入失败，请确认已授予 root")
+                HintState.show("配置下发失败：LSPosed 未连接，且没有 root 权限")
             } else {
                 HintState.show(if (next) "已开启日志记录" else "已关闭日志记录")
             }

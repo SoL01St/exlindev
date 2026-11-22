@@ -1,60 +1,113 @@
 package io.github.sol01st.nobrowser.ui
 
 import android.content.Intent
-import androidx.compose.foundation.layout.Box
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.runtime.derivedStateOf
-import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.rememberHazeState
 import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
-import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import io.github.sol01st.nobrowser.data.InstalledApps
 import top.yukonga.miuix.kmp.basic.BasicComponent
-import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
+/**
+ * 添加应用。
+ *
+ * 读取应用列表依赖系统的「读取应用列表」权限（manifest 里保留 QUERY_ALL_PACKAGES）。
+ * 一进页面就主动读一次，HyperOS 等系统会在这一刻弹授权框；拿到的列表明显不完整时
+ * 再补一个应用内弹窗，把用户直接送到权限页，回来后自动重新检测。
+ */
 @Composable
 fun AddAppScreen(
     installed: List<InstalledApps.Item>,
     existing: Set<String>,
     onBack: () -> Unit,
+    onReload: () -> Unit,
     onPick: (String, String) -> Unit,
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
 
-    // 首次进入且读不到足够的应用列表时，提示去系统里开启「获取应用列表」权限（MIUI/HyperOS 由系统 AppOps 控制，无法代码申请）
-    val tipPrefs = remember { context.getSharedPreferences("nxb_hint", android.content.Context.MODE_PRIVATE) }
-    var showAppListTip by remember {
-        mutableStateOf(installed.size < 10 && !tipPrefs.getBoolean("applist_tip", false))
+    val tipPrefs = remember {
+        context.getSharedPreferences("nxb_hint", android.content.Context.MODE_PRIVATE)
     }
+    var showAppListTip by remember { mutableStateOf(false) }
+    var requestedOnce by remember { mutableStateOf(false) }
+
+    fun markTipShown() {
+        tipPrefs.edit().putBoolean("applist_tip", true).apply()
+    }
+
+    fun openAppPermissionPage() {
+        runCatching {
+            context.startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:" + context.packageName),
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }.onFailure { HintState.show("打不开系统设置，请手动到应用权限里开启「读取应用列表」") }
+    }
+
+    // 从系统设置返回后立刻重新读一次，用户不用再手动点
+    val settingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { onReload() }
+
+    // 进页面先主动读一次：这一步本身就会触发系统的「读取应用列表」授权弹窗
+    LaunchedEffect(Unit) {
+        if (!requestedOnce) {
+            requestedOnce = true
+            onReload()
+        }
+    }
+
+    // 列表几乎为空 = 权限被系统挡了，弹一次应用内引导
+    LaunchedEffect(installed.size) {
+        if (installed.size < 3 && !tipPrefs.getBoolean("applist_tip", false)) {
+            showAppListTip = true
+        }
+    }
+
     val list = remember(installed, query, existing) {
         installed.filter { it.pkg !in existing }
             .filter { query.isBlank() || it.label.contains(query, true) || it.pkg.contains(query, true) }
@@ -62,7 +115,7 @@ fun AddAppScreen(
 
     val listState = rememberLazyListState()
 
-        val topHaze = rememberHazeState()
+    val topHaze = rememberHazeState()
     val density = LocalDensity.current
     val collapse by remember(listState, density) {
         derivedStateOf {
@@ -71,7 +124,7 @@ fun AddAppScreen(
         }
     }
 
-Scaffold(
+    Scaffold(
         containerColor = MiuixTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0),
     ) { padding ->
@@ -126,12 +179,22 @@ Scaffold(
             }
             if (list.isEmpty()) {
                 item {
-                    AppText(
-                        "没有可添加的应用",
-                        fontSize = 13.sp,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        modifier = Modifier.padding(16.dp),
-                    )
+                    Column(Modifier.padding(16.dp)) {
+                        AppText(
+                            "没有可添加的应用",
+                            fontSize = 13.sp,
+                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        AppText(
+                            "列表一直是空的？点这里检查「读取应用列表」权限",
+                            fontSize = 12.sp,
+                            color = MiuixTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .clickable { showAppListTip = true }
+                                .padding(vertical = 4.dp),
+                        )
+                    }
                 }
             }
         }
@@ -149,28 +212,38 @@ Scaffold(
     }
 
     if (showAppListTip) {
-                SimpleDialog(
-                    title = "需要读取应用列表",
-                    text = "添加应用需要读取本机已安装应用。\n\n" +
-                        "如果列表为空或不完整，请到「系统设置 → 应用管理 → 不用内置浏览器打开 → 权限」" +
-                        "开启「获取应用列表」，然后回到这里重新进入本页。",
-                    confirmText = "去设置",
-                    onDismiss = {
-                        showAppListTip = false
-                        tipPrefs.edit().putBoolean("applist_tip", true).apply()
-                    },
-                    onConfirm = {
-                        showAppListTip = false
-                        tipPrefs.edit().putBoolean("applist_tip", true).apply()
-                        runCatching {
-                            context.startActivity(
-                                Intent(
-                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                                    Uri.parse("package:" + context.packageName),
-                                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                            )
-                        }
-                    },
-                )
+        AppDialog(onDismiss = {
+            showAppListTip = false
+            markTipShown()
+        }) {
+            AppText("授权读取应用", fontSize = 18.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(10.dp))
+            AppText(
+                "添加应用要先读取本机已安装的应用，但系统这次没有把列表给到本应用。\n\n" +
+                    "到「系统设置 → 应用管理 → 不用内置浏览器打开 → 权限」里打开" +
+                    "「读取应用列表 / 获取应用列表」，然后回来点「重新检测」。",
+                fontSize = 13.sp,
+                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                DialogAction("重新检测", onClick = {
+                    showAppListTip = false
+                    onReload()
+                    HintState.show("正在重新读取应用列表…")
+                })
+                Spacer(Modifier.width(4.dp))
+                DialogAction("去授权", primary = true, onClick = {
+                    showAppListTip = false
+                    markTipShown()
+                    settingsLauncher.launch(
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:" + context.packageName),
+                        ),
+                    )
+                })
             }
+        }
+    }
 }

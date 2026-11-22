@@ -59,6 +59,7 @@ import io.github.sol01st.nobrowser.data.InstalledApps
 import io.github.sol01st.nobrowser.data.ModuleState
 import io.github.sol01st.nobrowser.data.RuleStore
 import io.github.sol01st.nobrowser.data.ScopeManager
+import io.github.sol01st.nobrowser.data.XposedConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -119,12 +120,33 @@ fun AppRoot() {
 
     LaunchedEffect(Unit) {
         installed = withContext(Dispatchers.IO) { InstalledApps.load(context) }
-        moduleEnabled = withContext(Dispatchers.IO) { ModuleState.isEnabled(context) }
+        moduleEnabled = withContext(Dispatchers.IO) { ModuleState.isEnabled() }
         installedLoaded = true
         // 内置规则刚升级过：重发配置文件，注入侧（微信等）才会读到新的规则与白名单
         if (store.consumeMigration()) {
             val json = store.exportJson(store.load())
             withContext(Dispatchers.IO) { ScopeManager.publishConfig(context, json) }
+        }
+    }
+
+    // 框架的 binder 可能比界面晚到：连上后把状态补一遍，并顺手把配置推一次
+    LaunchedEffect(Unit) {
+        val listener: (io.github.libxposed.service.XposedService?) -> Unit = { svc ->
+            if (svc != null) {
+                scope.launch {
+                    moduleEnabled = withContext(Dispatchers.IO) { ModuleState.isEnabled() }
+                    val json = store.exportJson(apps)
+                    withContext(Dispatchers.IO) { ScopeManager.publishConfig(context, json) }
+                }
+            } else {
+                moduleEnabled = null
+            }
+        }
+        XposedConnection.addListener(listener)
+        try {
+            kotlinx.coroutines.awaitCancellation()
+        } finally {
+            XposedConnection.removeListener(listener)
         }
     }
 
@@ -135,7 +157,7 @@ fun AppRoot() {
             val json = store.exportJson(list)
             val ok = withContext(Dispatchers.IO) { ScopeManager.publishConfig(context, json) }
             if (!ok) {
-                HintState.show("配置写入失败：请在 KernelSU 里允许本应用使用 root")
+                HintState.show("配置下发失败：LSPosed 未连接，且没有 root 权限")
             }
         }
     }
@@ -146,7 +168,7 @@ fun AppRoot() {
         if (pkg !in notified) {
             notified.add(pkg)
             prefs.edit().putStringSet("pkg", notified).apply()
-            HintState.show("首次接管的应用需在 LSPosed 作用域里重新勾选一次")
+            HintState.show("已加入 LSPosed 作用域，重启该应用后接管才会生效")
         }
     }
 
@@ -160,18 +182,24 @@ fun AppRoot() {
         scope.launch {
             syncingScope = true
             try {
-                val remote = withContext(Dispatchers.IO) { ScopeManager.readScope(context) }
+                val remote = withContext(Dispatchers.IO) { ScopeManager.readScope() }
                 val installedPkgs = installed.map { it.pkg }.toHashSet()
                 when {
-                    remote == null -> if (!silent) HintState.show("读取 LSPosed 作用域失败，请确认已授予 root")
+                    remote == null -> if (!silent) {
+                        HintState.show("读取 LSPosed 作用域失败：未连接到框架，请先在 LSPosed 里启用本模块")
+                    }
                     remote.isEmpty() -> {
                         val pkgs = apps.filter { it.enabled && it.packageName in installedPkgs }
                             .map { it.packageName }
-                        withContext(Dispatchers.IO) {
-                            ScopeManager.syncAll(context, pkgs)
-                            ScopeManager.publishConfig(context, store.exportJson(apps))
+                        val ok = withContext(Dispatchers.IO) {
+                            ScopeManager.syncAll(pkgs) &&
+                                ScopeManager.publishConfig(context, store.exportJson(apps))
                         }
-                        if (!silent) HintState.show("已把当前接管的应用写入 LSPosed")
+                        if (!silent) {
+                            HintState.show(
+                                if (ok) "已把当前接管的应用写入 LSPosed" else "写入 LSPosed 作用域失败",
+                            )
+                        }
                     }
                     else -> {
                         val updated = apps.map { app ->
@@ -185,7 +213,7 @@ fun AppRoot() {
                         if (!silent) HintState.show("已同步 LSPosed 作用域（${remote.size} 个应用）")
                     }
                 }
-                moduleEnabled = withContext(Dispatchers.IO) { ModuleState.isEnabled(context) }
+                moduleEnabled = withContext(Dispatchers.IO) { ModuleState.isEnabled() }
             } catch (e: Exception) {
                 android.util.Log.w("ExLinkNoBrowser", "syncFromScope failed", e)
             } finally {
@@ -225,16 +253,13 @@ fun AppRoot() {
 
     fun syncScope(pkg: String, enabled: Boolean, silent: Boolean = false) {
         scope.launch {
-            val ok = withContext(Dispatchers.IO) {
-                val r = ScopeManager.setScope(context, pkg, enabled)
-                if (r && enabled) ScopeManager.restartPackage(pkg)
-                r
-            }
+            val ok = withContext(Dispatchers.IO) { ScopeManager.setScope(pkg, enabled) }
             if (silent) return@launch
             val msg = if (ok) {
-                if (enabled) "已接管，并写入 LSPosed 作用域" else "已取消接管，作用域已移除"
+                // 作用域只对之后启动的进程生效，没有 root 就没法替用户杀掉目标应用
+                if (enabled) "已接管并加入 LSPosed 作用域，重启该应用后生效" else "已取消接管，作用域已移除"
             } else {
-                "作用域同步失败：请确认已授予 root 权限"
+                "作用域同步失败：请先在 LSPosed 里启用本模块"
             }
             HintState.show(msg)
         }
@@ -341,7 +366,6 @@ fun AppRoot() {
                             SettingsScreen(
                                 apps = apps,
                                 store = store,
-                                moduleEnabled = moduleEnabled,
                                 listState = settingsListState,
                                 onOpenAbout = { route = Route.About },
                                 onOpenLogs = { route = Route.Logs },
@@ -351,7 +375,6 @@ fun AppRoot() {
                                         val installedPkgs = installed.map { it.pkg }.toHashSet()
                                         withContext(Dispatchers.IO) {
                                             ScopeManager.syncAll(
-                                                context,
                                                 restored.filter { it.enabled && it.packageName in installedPkgs }
                                                     .map { it.packageName },
                                             )
@@ -366,6 +389,7 @@ fun AppRoot() {
                         installed = installed,
                         existing = apps.map { it.packageName }.toSet(),
                         onBack = { route = Route.Root },
+                        onReload = { reloadApps() },
                         onPick = { label, pkg ->
                             addApp(pkg, label)
                             route = Route.Root

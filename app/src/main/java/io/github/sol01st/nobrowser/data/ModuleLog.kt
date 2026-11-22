@@ -82,7 +82,7 @@ object ModuleLog {
         // 不能用 `-t N`：那个参数取的是「全部日志的最后 N 行」，系统日志动辄十几万行，
         // 模块日志早就被挤出窗口了（实测 -t 3000 只剩 10 行，按 tag 过滤有 54 行）。
         // 所以先按 tag 过滤，再用 tail 截取，保证截到的是模块日志本身。
-        val output = ScopeManager.capture("logcat -d -s $TAG:D | tail -n $limitLines")
+        val output = RootShell.capture("logcat -d -s $TAG:D | tail -n $limitLines")
             ?: return false to emptyList()
         return true to parse(output).reversed()
     }

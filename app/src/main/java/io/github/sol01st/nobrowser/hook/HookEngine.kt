@@ -72,56 +72,65 @@ internal object HookEngine {
 
     @Volatile
     private var currentApp: TargetApp? = null
+
+    /** 宿主侧缓存的远程配置对象，避免每次拦截都重新跨进程取一遍。 */
+    private var remotePrefs: android.content.SharedPreferences? = null
+
+    /** 上次加载的配置指纹，内容变了才重新解析。 */
     @Volatile
-    private var configMtime = -1L
+    private var configSignature = Int.MIN_VALUE
+
     private var installed = false
 
     fun onPackageLoaded(module: XposedModule, packageName: String, loader: ClassLoader) {
         if (packageName == Constants.SELF_PACKAGE) return
-        val apps = loadRules(module)
-        val app = apps.firstOrNull { it.packageName == packageName && it.enabled } ?: return
+        val raw = readRawConfig(module)
+        val app = decodeRules(raw).firstOrNull { it.packageName == packageName && it.enabled } ?: return
         currentApp = app
-        configMtime = configFileMtime()
+        configSignature = signatureOf(raw)
         i("attached to $packageName, rules=${app.rules.size}, ask=${app.askEachTime}")
         install(module, loader)
     }
 
-    private fun configFileMtime(): Long = runCatching {
-        val file = java.io.File(CONFIG_PATH)
-        if (file.exists()) file.lastModified() else 0L
-    }.getOrDefault(0L)
-
     /**
      * 配置只在进程启动时读一次的话，用户改完设置而应用一直挂在后台就永远不生效。
-     * 这里每次拦截前看一眼配置文件时间戳，变了就重新加载。
+     * 这里每次拦截前对一次配置指纹，变了就重新加载。
      */
     @Synchronized
     private fun refreshConfig(module: XposedModule, packageName: String) {
-        val mtime = configFileMtime()
-        if (mtime == configMtime) return
-        configMtime = mtime
-        val apps = loadRules(module)
-        currentApp = apps.firstOrNull { it.packageName == packageName && it.enabled }
+        val raw = readRawConfig(module)
+        val signature = signatureOf(raw)
+        if (signature == configSignature) return
+        configSignature = signature
+        currentApp = decodeRules(raw).firstOrNull { it.packageName == packageName && it.enabled }
         i("config reloaded for $packageName, ask=${currentApp?.askEachTime}")
     }
 
-    private fun loadRules(module: XposedModule): List<TargetApp> {
-        // 优先读模块发布的全局配置文件，改完设置杀掉目标应用即可生效
-        val fromFile = runCatching {
+    /**
+     * 配置源，按可靠性排序：
+     *  1. 框架远程配置 —— 模块 App 通过 XposedService 写入，宿主读的是同一份，零 root，改完即生效；
+     *  2. /data/local/tmp/nxb_config.json —— 老通道，只有 root 用户才写得进去，作为兼容保留；
+     *  3. 内置默认规则。
+     */
+    private fun readRawConfig(module: XposedModule): String? {
+        val remote = runCatching {
+            val prefs = remotePrefs ?: module.getRemotePreferences(Constants.PREFS_NAME)
+                .also { remotePrefs = it }
+            prefs.getString(Constants.PREFS_KEY_RULES, null)
+        }.getOrNull()
+        if (!remote.isNullOrBlank()) return remote
+        return runCatching {
             val file = java.io.File(CONFIG_PATH)
             if (file.exists() && file.canRead()) file.readText() else null
-        }.getOrNull()
-        if (!fromFile.isNullOrBlank()) {
-            loggingEnabled = RulesCodec.loggingOf(fromFile)
-            val parsed = RulesCodec.decode(fromFile)
-            if (parsed.isNotEmpty()) return parsed
-        }
-        val remote = runCatching {
-            module.getRemotePreferences(Constants.PREFS_NAME)
-                .getString(Constants.PREFS_KEY_RULES, null)
-        }.getOrNull()
-        loggingEnabled = RulesCodec.loggingOf(remote)
-        val list = RulesCodec.decode(remote ?: DefaultRules.JSON)
+        }.getOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    private fun signatureOf(raw: String?): Int =
+        raw?.let { it.length * 31 + it.hashCode() } ?: 0
+
+    private fun decodeRules(raw: String?): List<TargetApp> {
+        loggingEnabled = RulesCodec.loggingOf(raw)
+        val list = RulesCodec.decode(raw ?: DefaultRules.JSON)
         return if (list.isEmpty()) RulesCodec.decode(DefaultRules.JSON) else list
     }
 
@@ -370,8 +379,58 @@ internal object HookEngine {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 putExtra(Constants.EXTRA_GUARD, true)
             }
-            activity.startActivity(view)
+            // Application context 不够：QQ 换过 Instrumentation，execStartActivity 里还会弹
+            // 「即将离开QQ 打开其他应用」的确认框。这里直接走 Binder 调 ActivityTaskManager。
+            if (!startExternalDirect(activity, view)) {
+                val ctx = activity.applicationContext
+                if (ctx != null) ctx.startActivity(view) else activity.startActivity(view)
+            }
         }.onFailure { Log.w(TAG, "open external failed", it) }
+    }
+
+    /**
+     * 直接用 Binder 调 ActivityTaskManager.startActivity 启动外部应用。
+     *
+     * QQ 把 Instrumentation 换成了自己的实现（execStartActivity 里做「即将离开QQ」确认），
+     * 所以 Activity / Application context 的 startActivity 都会被它拦一道；只有绕过
+     * 应用层的 Instrumentation、直接走系统服务才能不弹框。
+     */
+    private fun startExternalDirect(activity: Activity, intent: Intent): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < 29) return false
+        return runCatching {
+            // 宿主进程里非 SDK 接口默认受 hidden API 限制，先尝试解除
+            runCatching {
+                val vm = Class.forName("dalvik.system.VMRuntime").getMethod("getRuntime").invoke(null)
+                vm?.javaClass?.getMethod("setHiddenApiExemptions", Array<String>::class.java)
+                    ?.invoke(vm, arrayOf("Landroid/app/", "Landroid/os/", "Landroid/content/"))
+            }
+            val atm = Class.forName("android.app.ActivityTaskManager")
+            val service = atm.getMethod("getService").invoke(null) ?: return false
+            val atClass = Class.forName("android.app.ActivityThread")
+            val appThread = atClass.getDeclaredField("mAppThread").apply { isAccessible = true }
+                .get(atClass.getMethod("currentActivityThread").invoke(null))
+            val method = service.javaClass.methods
+                .filter { it.name == "startActivity" && it.parameterTypes.size >= 10 }
+                .maxByOrNull { it.parameterTypes.size } ?: return false
+            var stringSeen = 0
+            var intSeen = 0
+            val args = method.parameterTypes.map { t ->
+                when {
+                    t.name == "android.app.IApplicationThread" -> appThread
+                    t == Intent::class.java -> intent
+                    // 第一个 String 是 callingPackage，其余（callingFeatureId / resultWho）留空
+                    t == String::class.java -> if (stringSeen++ == 0) activity.packageName else null
+                    // 第一个 int 是 requestCode，第二个是 flags
+                    t == Int::class.javaPrimitiveType -> if (intSeen++ == 1) intent.flags else 0
+                    t == Long::class.javaPrimitiveType -> 0L
+                    t == Boolean::class.javaPrimitiveType -> false
+                    else -> null
+                }
+            }.toTypedArray()
+            method.invoke(service, *args)
+            Log.i(TAG, "start external via ATM: ${intent.data}")
+            true
+        }.onFailure { Log.w(TAG, "ATM start failed, fallback to context", it) }.getOrDefault(false)
     }
 
     /** 液态玻璃风格选择框：背景实时模糊 + 半透明卡片。 */

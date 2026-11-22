@@ -2,8 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 读取已安装应用列表：添加应用时要列出桌面上的应用。
+         保留这条权限，系统（HyperOS 等）才会在首次读取时弹「读取应用列表」授权框。 -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+    <!-- 检查更新 -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
@@ -16,21 +19,41 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.NiXiang">
 
+        <!-- 主界面：不导出，只允许应用内部（含 EntryActivity）启动。
+             这样即使桌面图标隐藏了，也不会被第三方应用直接拉起。 -->
         <activity
             android:name=".ui.MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|fontScale"
-            android:exported="true"
+            android:exported="false"
             android:label="@string/app_name"
             android:theme="@style/Theme.NiXiang"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- 唯一对外入口：
+             LSPosed 管理器解析「模块设置 / 右下角打开」时找的是这个 category，
+             解析顺序 MODULE_SETTINGS → CATEGORY_INFO → CATEGORY_LAUNCHER，
+             隐藏桌面图标不影响这里。 -->
+        <activity
+            android:name=".ui.EntryActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density|fontScale"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.NiXiang"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
+            </intent-filter>
+        </activity>
+
+        <!-- 桌面图标：由设置里的「显示桌面图标」开关启停（LauncherIconManager）。 -->
         <activity-alias
             android:name=".Launcher"
             android:enabled="true"
             android:exported="true"
             android:icon="@mipmap/ic_launcher"
             android:label="@string/app_name"
-            android:targetActivity=".ui.MainActivity">
+            android:targetActivity=".ui.EntryActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

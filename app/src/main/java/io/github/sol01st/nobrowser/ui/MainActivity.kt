@@ -8,7 +8,12 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import io.github.sol01st.nobrowser.data.ThemePrefs
 
-class MainActivity : ComponentActivity() {
+/**
+ * 主界面。自身不导出（`exported=false`），只允许应用内部启动：
+ * - 桌面图标 → `.Launcher` alias → [EntryActivity]
+ * - LSPosed「模块设置 / 打开」→ [EntryActivity]
+ */
+open class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val mode = ThemePrefs.load(this)
         ThemeState.mode = mode

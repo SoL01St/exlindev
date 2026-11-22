@@ -1,26 +1,46 @@
 package io.github.sol01st.nobrowser.data
 
-import android.content.Context
-import io.github.sol01st.nobrowser.core.Constants
-import java.io.File
-
 /**
- * 只读 LSPosed 里本模块的总开关状态（modules_state.enabled）。
- * 不做任何注入态 / 规则命中统计。
+ * 框架与注入状态的快照，全部来自 LSPosed 的 service 通道，不需要 root。
  */
+data class FrameworkInfo(
+    /** 是否连接上框架（连不上 = LSPosed 未启用本模块，或框架版本过旧）。 */
+    val connected: Boolean,
+    /** 框架名，例如 LSPosed / Vector。 */
+    val framework: String?,
+    val version: String?,
+    val apiVersion: Int,
+    /** 当前作用域里的包。 */
+    val scope: Set<String>,
+    /** 正在注入的目标进程数（钩子已生效的进程）。 */
+    val runningTargets: Int,
+)
+
 object ModuleState {
 
-    /** true = 已在 LSPosed 中启用；false = 未启用或表中无记录；null = 读不到（root/sqlite 不可用）。 */
-    fun isEnabled(context: Context): Boolean? {
-        val bin = ScopeManager.prepare(context) ?: return null
-        val libDir = File(bin.parentFile, "lib").absolutePath
-        val sql = "select enabled from modules_state where module_pkg_name='" +
-            Constants.SELF_PACKAGE + "' and user_id=0;"
-        val out = ScopeManager.capture(
-            "LD_LIBRARY_PATH=$libDir ${bin.absolutePath} ${Constants.LSPD_DB} \"$sql\"",
-        ) ?: return null
-        val value = out.trim()
-        if (value.isEmpty()) return false
-        return value.firstOrNull() == '1'
+    fun query(): FrameworkInfo {
+        val svc = XposedConnection.service()
+            ?: return FrameworkInfo(false, null, null, 0, emptySet(), 0)
+        val scope = runCatching { svc.scope.toSet() }.getOrDefault(emptySet())
+        val running = runCatching { svc.runningTargets.size }.getOrDefault(0)
+        return FrameworkInfo(
+            connected = true,
+            framework = XposedConnection.name(svc).ifBlank { null },
+            version = XposedConnection.version(svc).ifBlank { null },
+            apiVersion = XposedConnection.api(svc),
+            scope = scope,
+            runningTargets = running,
+        )
+    }
+
+    /**
+     * 模块是否已生效。
+     * true = 框架已连接且有目标进程在注入；false = 连上了但还没有目标；
+     * null = 连不上框架（未启用或框架不支持 service API）。
+     */
+    fun isEnabled(): Boolean? {
+        val info = query()
+        if (!info.connected) return null
+        return info.runningTargets > 0
     }
 }

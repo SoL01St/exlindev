@@ -218,9 +218,9 @@ private fun ModuleBanner(enabled: Boolean?) {
         false -> "模块未激活"
     }
     val desc = when (enabled) {
-        null -> "读不到 LSPosed 配置，请在设置页确认 Root 权限后下拉刷新"
+        null -> "没连上 LSPosed 框架：请在 LSPosed 里启用本模块，然后重新打开本应用"
         true -> "LSPosed 已启用本模块，作用域内应用重启后生效"
-        false -> "请在 LSPosed 中启用本模块"
+        false -> "框架已连接，但还没有目标进程注入：确认作用域已勾选并重启目标应用"
     }
     GroupCard(modifier = Modifier.padding(bottom = 2.dp)) {
         Column(

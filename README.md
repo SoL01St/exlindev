@@ -4,7 +4,7 @@
 
 **ExLink · NoBrowser** — 把应用内置浏览器里的链接抢出来，交给你自己的浏览器
 
-[![Version](https://img.shields.io/badge/version-5.0.2-1f6feb)](https://github.com/SoL01St/exlindev/releases)
+[![Version](https://img.shields.io/badge/version-5.0.3-1f6feb)](https://github.com/SoL01St/exlindev/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3ddc84?logo=android&logoColor=white)](https://developer.android.com)
 [![LSPosed](https://img.shields.io/badge/LSPosed-API%20102-7c5cff)](https://github.com/libxposed/api)
 [![License](https://img.shields.io/badge/license-MIT-2ea043)](LICENSE)
@@ -26,7 +26,7 @@
 | | |
 | --- | --- |
 | 包名 | `io.github.sol01st.nobrowser` |
-| 版本 | 5.0.2（versionCode 34） |
+| 版本 | 5.0.3（versionCode 35） |
 | 运行环境 | LSPosed · libxposed API 102 |
 | 系统 | Android 8.0+（minSdk 26 / targetSdk 34） |
 | 界面 | Jetpack Compose + [Miuix](https://github.com/compose-miuix-ui/miuix) |
@@ -40,6 +40,8 @@
 - **规则引擎**：Activity 支持 `*` `?` 通配；每条规则、白名单可单独启停
 - **实时生效**：改完开关不用杀应用，下一次点链接就按新配置走
 - **白名单**：按域名放行，支持 `=host` 精确匹配
+- **免 root**：作用域与配置走 LSPosed service 通道，不授权 root 也能用（仅模块日志需要 root 读 logcat）
+- **隐藏桌面图标**：关掉桌面图标后，仍可从 LSPosed 模块设置右下角「打开」进入
 - **作用域双向同步**：LSPosed 与模块内的开关互相同步
 - **备份与恢复**：按时间点自选恢复，自动保留最近 5 份
 - **导入 / 导出**：JSON 格式，可从文件恢复
@@ -49,8 +51,8 @@
 
 1. 从 [Releases](https://github.com/SoL01St/exlindev/releases) 下载 APK 安装
 2. 在 LSPosed 中启用模块，勾选需要接管的应用
-3. 打开一次模块并授予 root 权限
-4. **首次接管某个应用后，需要在 LSPosed 作用域里对它重新勾选一次**
+3. 打开模块，「添加应用」里按提示允许「读取应用列表」
+4. 首次接管某个应用后重启该应用即可（作用域会自动勾选，不用手动补勾）
 
 ## 致谢
 

@@ -16,9 +16,13 @@ android {
         applicationId = "io.github.sol01st.nobrowser"
         minSdk = 26
         targetSdk = 34
-        versionCode = 34
-        versionName = "5.0.2"
-        resourceConfigurations += listOf("zh", "en")
+        versionCode = 35
+        versionName = "5.0.3"
+    }
+
+    // AGP 9 起 defaultConfig.resourceConfigurations 被移除，改用 androidResources.localeFilters
+    androidResources {
+        localeFilters += listOf("zh", "en")
     }
 
     // 签名信息一律从 gradle 属性读取，仓库里不保存任何密码：
@@ -105,4 +109,8 @@ dependencies {
     implementation("dev.chrisbanes.haze:haze:1.6.10")
 
     compileOnly("io.github.libxposed:api:102.0.0")
+
+    // LSPosed 的 service 通道：作用域读写 + 远程配置下发，全程不需要 root。
+    // 自带 XposedProvider（authority 为 ${applicationId}.XposedService），由框架把 binder 送进来。
+    implementation("io.github.libxposed:service:102.0.0")
 }

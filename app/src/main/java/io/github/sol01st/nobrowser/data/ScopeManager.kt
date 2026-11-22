@@ -1,183 +1,125 @@
 package io.github.sol01st.nobrowser.data
 
-import android.content.Context
 import android.util.Log
+import io.github.libxposed.service.XposedService
 import io.github.sol01st.nobrowser.core.Constants
-import java.io.File
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 /**
- * 通过 root 维护 LSPosed 的作用域配置，并记录每次权限使用。
+ * LSPosed 作用域与配置读写，全部走框架 service（libxposed API 102），不需要 root。
+ *
+ * 之前的实现是 root + 自带 sqlite3 直接改 /data/adb/lspd/config/modules_config.db，
+ * 一旦没授权 root 就整条链路失效；现在改用框架提供的接口：
+ *  - [readScope] → `XposedService.getScope()`
+ *  - [setScope] / [syncAll] → `requestScope()` / `removeScope()`
+ *  - [publishConfig] → `getRemotePreferences()`，宿主侧用同名 group 读取
+ *
+ * 框架 service 不可用时这些方法返回 null / false，调用方负责提示用户。
  */
 object ScopeManager {
 
     private const val TAG = "ExLinkNoBrowser"
-    /** su 调用超时：未授权 root 时 su 会一直等授权不退出，必须自己断开。 */
-    private const val SU_TIMEOUT_MS = 8000L
-    private const val DIR = "nxbin"
-    private val LIBS = listOf(
-        "libz.so.1",
-        "libreadline.so.8",
-        "libncursesw.so.6",
-        "libtinfo.so.6",
-        "libandroid-support.so",
-    )
-    private val SU_PATHS = listOf("su", "/system/bin/su", "/system/xbin/su", "/sbin/su")
 
-    @Volatile
-    private var prepared = false
+    /** 等待框架批准作用域申请的最长时间。 */
+    private const val SCOPE_TIMEOUT_SEC = 6L
 
-    fun prepare(context: Context): File? {
-        val dir = File(context.filesDir, DIR)
-        val bin = File(dir, "sqlite3")
-        if (prepared && bin.exists()) return bin
-        runCatching {
-            dir.mkdirs()
-            val libDir = File(dir, "lib")
-            libDir.mkdirs()
-            if (!bin.exists()) copyAsset(context, "nxbin/sqlite3", bin)
-            LIBS.forEach { name ->
-                val target = File(libDir, name)
-                if (!target.exists()) copyAsset(context, "nxbin/lib/$name", target)
-            }
-            bin.setExecutable(true, false)
-            libDir.listFiles()?.forEach { it.setReadable(true, false) }
-            prepared = true
-        }.onFailure { Log.w(TAG, "prepare sqlite failed", it) }
-        return if (bin.exists()) bin else null
-    }
+    /** 框架是否已连接；false 时下面所有操作都会失败。 */
+    fun available(): Boolean = XposedConnection.connected()
 
-    private fun copyAsset(context: Context, asset: String, target: File) {
-        context.assets.open(asset).use { input ->
-            target.outputStream().use { output -> input.copyTo(output) }
+    /** 读取当前勾选的作用域；框架不可用返回 null。 */
+    fun readScope(): Set<String>? {
+        val svc = XposedConnection.service() ?: return null
+        return runCatching { svc.scope.toSet() }.getOrElse { e ->
+            Log.w(TAG, "读取作用域失败", e)
+            null
         }
     }
 
-    /** 写入/移除作用域，并保证模块本身处于启用状态。 */
-    fun setScope(context: Context, packageName: String, enabled: Boolean): Boolean {
-        val bin = prepare(context) ?: return false
-        val libDir = File(bin.parentFile, "lib").absolutePath
-        val self = Constants.SELF_PACKAGE
-        val sql = buildString {
-            append("INSERT OR REPLACE INTO modules_state(module_pkg_name,user_id,enabled,scope_request_blocked) VALUES('$self',0,1,0);")
+    /** 勾选 / 取消一个应用的作用域。 */
+    fun setScope(packageName: String, enabled: Boolean): Boolean {
+        val svc = XposedConnection.service() ?: return false
+        val current = runCatching { svc.scope.toSet() }.getOrNull() ?: return false
+        return runCatching {
             if (enabled) {
-                append("INSERT OR IGNORE INTO scope(module_pkg_name,app_pkg_name,user_id) VALUES('$self','$packageName',0);")
+                if (packageName in current) return true
+                requestScope(svc, listOf(packageName))
             } else {
-                append("DELETE FROM scope WHERE module_pkg_name='$self' AND app_pkg_name='$packageName';")
+                if (packageName !in current) return true
+                svc.removeScope(listOf(packageName))
+                true
             }
+        }.getOrElse { e ->
+            Log.w(TAG, "设置作用域失败：$packageName", e)
+            false
         }
-        val cmd = "LD_LIBRARY_PATH=$libDir ${bin.absolutePath} ${Constants.LSPD_DB} \"$sql\""
-        val ok = runSu(cmd)
-        return ok
     }
 
-    fun syncAll(context: Context, packages: Collection<String>): Boolean {
-        val bin = prepare(context) ?: return false
-        val libDir = File(bin.parentFile, "lib").absolutePath
-        val self = Constants.SELF_PACKAGE
-        val sql = buildString {
-            append("INSERT OR REPLACE INTO modules_state(module_pkg_name,user_id,enabled,scope_request_blocked) VALUES('$self',0,1,0);")
-            append("DELETE FROM scope WHERE module_pkg_name='$self';")
-            packages.forEach {
-                append("INSERT OR IGNORE INTO scope(module_pkg_name,app_pkg_name,user_id) VALUES('$self','$it',0);")
-            }
+    /** 把作用域整体同步成 [packages]（多退少补）。 */
+    fun syncAll(packages: Collection<String>): Boolean {
+        val svc = XposedConnection.service() ?: return false
+        val current = runCatching { svc.scope.toSet() }.getOrNull() ?: return false
+        val target = packages.toSet()
+        val remove = current - target
+        val add = target - current
+        return runCatching {
+            if (remove.isNotEmpty()) svc.removeScope(remove.toList())
+            if (add.isEmpty()) return true
+            requestScope(svc, add.toList())
+        }.getOrElse { e ->
+            Log.w(TAG, "同步作用域失败", e)
+            false
         }
-        val cmd = "LD_LIBRARY_PATH=$libDir ${bin.absolutePath} ${Constants.LSPD_DB} \"$sql\""
-        val ok = runSu(cmd)
-        return ok
-    }
-
-    /** 读取 LSPosed 里当前勾选的作用域。 */
-    fun readScope(context: Context): Set<String>? {
-        val bin = prepare(context) ?: return null
-        val libDir = File(bin.parentFile, "lib").absolutePath
-        val self = Constants.SELF_PACKAGE
-        val cmd = "LD_LIBRARY_PATH=$libDir ${bin.absolutePath} ${Constants.LSPD_DB} " +
-            "\"select app_pkg_name from scope where module_pkg_name='$self';\""
-        val out = runSuCapture(cmd) ?: return null
-        val set = out.lines().map { it.trim() }.filter { it.isNotEmpty() }.toHashSet()
-        return set
-    }
-
-    fun restartPackage(packageName: String) {
-        if (packageName == Constants.SELF_PACKAGE) return
-        runSu("am force-stop $packageName")
     }
 
     /**
-     * 把当前规则发布到 /data/local/tmp/nxb_config.json。
-     * Xposed 侧优先读这个文件，避免 remote preferences 不刷新的问题。
+     * 下发规则配置。
+     *
+     * 首选框架的远程配置：写进 `nxb_config` 这个 group，宿主进程用
+     * `getRemotePreferences("nxb_config")` 读到的是同一份数据，全程不需要 root。
+     * 框架不可用时才回落到老的文件通道（需要 root）。
      */
-    fun publishConfig(context: Context, json: String): Boolean {
-        val file = File(context.filesDir, "nxb_config.json")
-        runCatching { file.writeText(json) }
-        val ok = runSu(
-            "cp " + file.absolutePath + " /data/local/tmp/nxb_config.json && " +
-                "chmod 644 /data/local/tmp/nxb_config.json",
-        )
-        return ok
+    fun publishConfig(context: android.content.Context, json: String): Boolean {
+        val svc = XposedConnection.service()
+        if (svc != null) {
+            val ok = runCatching {
+                svc.getRemotePreferences(Constants.PREFS_NAME)
+                    .edit()
+                    .putString(Constants.PREFS_KEY_RULES, json)
+                    .commit()
+            }.getOrElse { e ->
+                Log.w(TAG, "写入框架远程配置失败", e)
+                false
+            }
+            if (ok) return true
+        }
+        Log.w(TAG, "框架远程配置不可用，回落到 root 文件通道")
+        return RootShell.publishConfig(context, json)
     }
 
-    fun hasRoot(context: Context? = null): Boolean = runSu("id -u")
+    /** 申请把包加入作用域，等框架回调（LSPosed 一般直接批准）。 */
+    private fun requestScope(svc: XposedService, packages: List<String>): Boolean {
+        val latch = CountDownLatch(1)
+        var approved = false
+        val listener = object : XposedService.OnScopeEventListener {
+            override fun onScopeRequestApproved(approvedPackages: List<String>) {
+                approved = true
+                latch.countDown()
+            }
 
-    /** 执行一条 root 命令并返回输出，用于收集 logcat 等。 */
-    fun capture(command: String): String? = runSuCapture(command)
-
-    /**
-     * 执行一条命令并读取输出，带超时。
-     * 未授权 root 时 su 会一直等待授权（不退出也不输出），
-     * 没有超时就会把调用方的协程永久挂住，这里超时后强杀并当作失败。
-     * 返回 null 表示超时或启动失败。
-     */
-    private fun execWithTimeout(exe: String, command: String, timeoutMs: Long): Pair<Int, String>? {
-        val process = ProcessBuilder(exe, "-c", command)
-            .redirectErrorStream(true)
-            .start()
-        var output = ""
-        val reader = Thread {
-            output = runCatching {
-                process.inputStream.bufferedReader().use { it.readText() }
-            }.getOrDefault("")
-        }.apply {
-            isDaemon = true
-            start()
+            override fun onScopeRequestFailed(message: String) {
+                Log.w(TAG, "作用域申请被拒绝：$message")
+                approved = false
+                latch.countDown()
+            }
         }
-        val finished = runCatching { process.waitFor(timeoutMs, TimeUnit.MILLISECONDS) }
+        svc.requestScope(packages, listener)
+        val finished = runCatching { latch.await(SCOPE_TIMEOUT_SEC, TimeUnit.SECONDS) }
             .getOrDefault(false)
         if (!finished) {
-            runCatching { process.destroyForcibly() }
-            reader.interrupt()
-            Log.w(TAG, "su[$exe] timeout after ${timeoutMs}ms")
-            return null
+            Log.w(TAG, "作用域申请超时：$packages")
+            return false
         }
-        reader.join(300)
-        return process.exitValue() to output
-    }
-
-    private fun runSu(command: String): Boolean {
-        for (exe in SU_PATHS) {
-            val result = runCatching { execWithTimeout(exe, command, SU_TIMEOUT_MS) }.getOrElse { e ->
-                Log.w(TAG, "su[$exe] failed: ${e.javaClass.simpleName}: ${e.message}")
-                null
-            }
-            if (result == null) {
-                Log.w(TAG, "su[$exe] unavailable/timeout")
-                continue
-            }
-            Log.i(TAG, "su[$exe](${result.first}): ${result.second.take(120)}")
-            if (result.first == 0) return true
-        }
-        return false
-    }
-
-    private fun runSuCapture(command: String): String? {
-        for (exe in SU_PATHS) {
-            val result = runCatching { execWithTimeout(exe, command, SU_TIMEOUT_MS) }.getOrElse { e ->
-                Log.w(TAG, "su[$exe] failed: ${e.javaClass.simpleName}: ${e.message}")
-                null
-            } ?: continue
-            if (result.first == 0) return result.second
-        }
-        return null
+        return approved
     }
 }
