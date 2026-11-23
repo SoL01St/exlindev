@@ -10,3 +10,7 @@ keystore/
 captures/
 .externalNativeBuild/
 .cxx/
+
+# 本地验证产物 / 升级备份，不入库
+*.apk
+.upgrade-backup-*/
