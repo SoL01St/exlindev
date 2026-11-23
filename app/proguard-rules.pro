@@ -15,8 +15,8 @@
 -keep interface io.github.libxposed.service.** { *; }
 -dontwarn io.github.libxposed.service.**
 
-# Miuix / Compose 保守保留
--keep class top.yukonga.miuix.** { *; }
+# Miuix / Compose：不整包保留（那会把 Compose 一起钉进包里，dex 直接翻三倍）。
+# Compose 的 @Composable 方法由下面的 keepclassmembers 兜住，其余交给 R8 正常裁剪。
 -dontwarn top.yukonga.miuix.**
 
 -dontwarn kotlinx.coroutines.**
