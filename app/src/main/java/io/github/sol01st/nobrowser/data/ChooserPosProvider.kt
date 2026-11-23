@@ -17,6 +17,9 @@ import io.github.sol01st.nobrowser.core.Constants
  * 模块设置页也可以直接用它复位。
  *
  * 只认 "get" / "set" 两个方法，值只接受两个 0~1 的浮点；写坏了最多是位置不对，没有别的副作用。
+ *
+ * 这一份是位置的唯一权威副本：宿主读它、拖完写它，不再往 Settings.System 之类的地方同步
+ * （HyperOS 不允许非系统应用写 Settings.System 的自定义 key，写只会白白多一次异常）。
  */
 class ChooserPosProvider : ContentProvider() {
 
@@ -27,6 +30,15 @@ class ChooserPosProvider : ContentProvider() {
         val sp = ctx.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
 
         return when (method) {
+            // 诊断：设置页两个开关读到的真实系统状态（排障用，不影响功能）
+            METHOD_DIAG -> Bundle().apply {
+                putString(
+                    KEY_DIAG,
+                    "autoStart=" + KeepAlive.autoStartEnabled(ctx) +
+                        " ignoringBattery=" + KeepAlive.ignoringBatteryOptimizations(ctx),
+                )
+            }
+
             METHOD_GET -> Bundle().apply {
                 putString(KEY_POS, sp.getString(Constants.PREFS_KEY_CHOOSER_POS, null))
             }
@@ -79,6 +91,8 @@ class ChooserPosProvider : ContentProvider() {
         const val AUTHORITY = Constants.CHOOSER_POS_AUTHORITY
         const val METHOD_GET = "get"
         const val METHOD_SET = "set"
+        const val METHOD_DIAG = "diag"
+        const val KEY_DIAG = "diag"
         const val KEY_POS = "pos"
         const val KEY_OK = "ok"
     }

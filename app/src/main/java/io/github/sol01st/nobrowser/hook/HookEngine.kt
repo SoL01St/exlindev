@@ -468,40 +468,175 @@ internal object HookEngine {
     /** 图标显示尺寸。 */
     private const val CHOOSER_ICON_DP = 28
 
+    /** 宿主进程自己的位置副本（每个宿主应用各存一份，模块被冻结时兜底）。 */
+    private const val LOCAL_POS_PREFS = "exlindev_chooser_pos"
+    private const val LOCAL_POS_KEY = "pos"
+
+    /** 本地值还没成功推给模块时置 true，读取时优先用本地值并后台补推。 */
+    private const val LOCAL_PENDING_KEY = "pending"
+
     /** 选择框位置的读写口：宿主进程写不回远程配置（libxposed 在目标进程里只读），走模块的 provider。 */
     private val chooserPosUri = Uri.parse("content://${Constants.CHOOSER_POS_AUTHORITY}/pos")
 
     /**
+     * 本进程最后已知的位置。
+     *
+     * 位置存在模块进程的 SharedPreferences 里，宿主进程要经 provider / 远程配置去拿；
+     * 模块进程被系统回收、正在被拉起、Binder 不可用时两条路都会失败，此时直接回落
+     * [DEFAULT_CHOOSER_RATIO] 就是用户看到的「弹回屏幕中间」。这里记一份本进程最近
+     * 一次成功读写的位置，只在所有通道都失败时使用。
+     *
+     * 注意它不是缓存策略：能读到时永远用读到的值，只在全挂时兜底。
+     */
+    @Volatile
+    private var lastKnownChooserRatio: Pair<Float, Float>? = null
+
+    /** 解析 "rx,ry"；长度不对或不是 0~1 的浮点都算无效。 */
+    private fun parseChooserRatio(raw: String?): Pair<Float, Float>? {
+        val parts = raw?.split(',') ?: return null
+        if (parts.size != 2) return null
+        val rx = parts[0].trim().toFloatOrNull() ?: return null
+        val ry = parts[1].trim().toFloatOrNull() ?: return null
+        if (rx !in 0f..1f || ry !in 0f..1f) return null
+        return rx to ry
+    }
+
+    /** 宿主进程自己的位置副本。模块进程被 ColorOS 冻结时 provider / 远程配置全部不可用，
+     *  这里保证本应用至少还记得它上次看到的位置，不会直接跳回屏幕中间。 */
+    private fun localPosPrefs(context: Context) =
+        context.getSharedPreferences(LOCAL_POS_PREFS, Context.MODE_PRIVATE)
+
+    /** 诊断输出用到的最后一个宿主 Context。 */
+    @Volatile
+    private var debugCtx: Context? = null
+
+    /**
+     * 诊断输出。
+     *
+     * proguard 的 -assumenosideeffects 会把 android.util.Log 全部删掉，System.err 在
+     * HyperOS 上又看不到，所以同时追加到宿主自己的外部私有目录：
+     * /sdcard/Android/data/<宿主包名>/files/nxb_pos.log
+     */
+    private fun dbg(msg: String) {
+        System.err.println("[NXB-POS] " + msg)
+        runCatching {
+            val ctx = debugCtx ?: return
+            val dir = ctx.getExternalFilesDir(null) ?: ctx.filesDir
+            val f = java.io.File(dir, "nxb_pos.log")
+            if (f.length() > 300_000L) f.writeText("")
+            f.appendText(System.currentTimeMillis().toString() + " " + msg + "\n")
+        }
+    }
+
+    /** 读成功后同步到内存与宿主本地副本；synced=true 表示这一份已经和全局一致。 */
+    private fun rememberRatio(context: Context, ratio: Pair<Float, Float>, synced: Boolean) {
+        lastKnownChooserRatio = ratio
+        runCatching {
+            val edit = localPosPrefs(context).edit()
+                .putString(LOCAL_POS_KEY, ratio.first.toString() + "," + ratio.second.toString())
+            if (synced) edit.putBoolean(LOCAL_PENDING_KEY, false)
+            edit.apply()
+        }
+    }
+
+    /** 把本地未同步的值在后台补推给模块，成功就清掉 pending。 */
+    private fun pushPending(context: Context, raw: String?) {
+        if (raw.isNullOrEmpty()) return
+        runCatching {
+            Thread {
+                runCatching {
+                    val out = context.contentResolver.call(
+                        chooserPosUri,
+                        "set",
+                        null,
+                        Bundle().apply { putString("pos", raw) },
+                    )
+                    if (out?.getBoolean("ok") == true) {
+                        localPosPrefs(context).edit().putBoolean(LOCAL_PENDING_KEY, false).apply()
+                        dbg("pending 补推成功 raw=" + raw)
+                    } else {
+                        dbg("pending 补推失败 raw=" + raw)
+                    }
+                }
+            }.start()
+        }
+    }
+
+    /**
      * 读选择框位置（可用区域内 0~1 的比例）。
      *
-     * 先问模块的 provider —— 宿主进程自己拖出来的位置只能存在那边；拿不到再退回远程配置
-     * （模块进程内自己写的时候是能读到的）；都不行用默认值。
+     * 顺序：本应用未同步的本地值 → provider → 远程配置 → 本地副本 → 本进程最后已知值
+     * → 默认值。每级独立 try，任一级拿到有效值就返回。
      *
-     * 刻意不做进程内缓存：位置是全局共享的，缓存会让后台已经跑着的应用一直用旧值。
+     * 位置的唯一权威副本在模块进程的 SharedPreferences 里，宿主只能经 provider 去拿；
+     * HyperOS 的 SmartPower 会冻结模块 UID，那一瞬间 provider / 远程配置都可能失败，
+     * 所以末级用本应用上次同步过的本地副本兜底，至少不会跳回屏幕中间。
      */
     private fun loadChooserRatio(context: Context): Pair<Float, Float> {
-        val raw = runCatching {
-            val viaProvider = context.contentResolver
-                .call(chooserPosUri, "get", null, null)
-                ?.getString("pos")
-            if (!viaProvider.isNullOrEmpty()) {
-                viaProvider
-            } else {
-                (remotePrefs ?: moduleRef?.getRemotePreferences(Constants.PREFS_NAME))
-                    ?.getString(Constants.PREFS_KEY_CHOOSER_POS, null)
-            }
-        }.getOrNull()
+        debugCtx = context.applicationContext
+        val prefs = localPosPrefs(context)
+        val localRaw = runCatching { prefs.getString(LOCAL_POS_KEY, null) }.getOrNull()
+        val pending = runCatching { prefs.getBoolean(LOCAL_PENDING_KEY, false) }.getOrDefault(false)
 
-        val ratio = raw?.split(',')?.let { parts ->
-            val rx = parts.getOrNull(0)?.trim()?.toFloatOrNull()
-            val ry = parts.getOrNull(1)?.trim()?.toFloatOrNull()
-            if (rx != null && ry != null) rx.coerceIn(0f, 1f) to ry.coerceIn(0f, 1f) else null
+        // 0. 本应用拖过但没推给模块：先用本地值，再后台补推
+        if (pending) {
+            parseChooserRatio(localRaw)?.let { ratio ->
+                dbg("pending 本地值优先 host=" + context.packageName + " raw=" + localRaw)
+                lastKnownChooserRatio = ratio
+                pushPending(context, localRaw)
+                return ratio
+            }
         }
-        return ratio ?: DEFAULT_CHOOSER_RATIO
+
+        // 1. 模块的 provider：位置的唯一权威副本
+        val viaProvider = runCatching {
+            context.contentResolver.call(chooserPosUri, "get", null, null)?.getString("pos")
+        }.onFailure { dbg("provider get 抛异常 host=" + context.packageName + ": " + it) }.getOrNull()
+        dbg("provider 返回 raw=" + viaProvider)
+        parseChooserRatio(viaProvider)?.let {
+            rememberRatio(context, it, synced = true)
+            return it
+        }
+
+        // 2. 远程配置：provider 挂了但模块进程还在时这条可能还通
+        val viaRemote = runCatching {
+            (remotePrefs ?: moduleRef?.getRemotePreferences(Constants.PREFS_NAME))
+                ?.getString(Constants.PREFS_KEY_CHOOSER_POS, null)
+        }.onFailure { dbg("remote prefs 抛异常: " + it) }.getOrNull()
+        dbg("remote 返回 raw=" + viaRemote)
+        parseChooserRatio(viaRemote)?.let {
+            rememberRatio(context, it, synced = true)
+            return it
+        }
+
+        // 3. 宿主自己的副本（上一次同步过的值）
+        parseChooserRatio(localRaw)?.let {
+            dbg("回落到本地副本 raw=" + localRaw)
+            lastKnownChooserRatio = it
+            return it
+        }
+
+        // 4. 本进程最后已知位置，最后才用默认值
+        val fallback = lastKnownChooserRatio
+        dbg("全部失败，fallback=" + (fallback ?: DEFAULT_CHOOSER_RATIO))
+        return fallback ?: DEFAULT_CHOOSER_RATIO
     }
 
     private fun saveChooserRatio(context: Context, rx: Float, ry: Float) {
-        val pos = "$rx,$ry"
+        debugCtx = context.applicationContext
+        val safeX = rx.coerceIn(0f, 1f)
+        val safeY = ry.coerceIn(0f, 1f)
+        val pos = safeX.toString() + "," + safeY.toString()
+        lastKnownChooserRatio = safeX to safeY
+
+        // 先落本地并 commit，同时标记 pending：模块推不动时本应用下次仍记得拖到哪
+        runCatching {
+            localPosPrefs(context).edit()
+                .putString(LOCAL_POS_KEY, pos)
+                .putBoolean(LOCAL_PENDING_KEY, true)
+                .commit()
+        }
+
         val saved = runCatching {
             val out = context.contentResolver.call(
                 chooserPosUri,
@@ -510,16 +645,23 @@ internal object HookEngine {
                 Bundle().apply { putString("pos", pos) },
             )
             out?.getBoolean("ok") == true
-        }.getOrDefault(false)
+        }.onFailure { dbg("provider set 抛异常: " + it) }.getOrDefault(false)
+        dbg("save pos=" + pos + " provider ok=" + saved)
 
-        if (!saved) {
-            // provider 不可用（模块被冻结等）时退回远程配置，模块进程内自己调用仍能写进去
+        if (saved) {
+            // provider 已把值写进 Settings.System，本地不再是 pending
             runCatching {
+                localPosPrefs(context).edit().putBoolean(LOCAL_PENDING_KEY, false).apply()
+            }
+        } else {
+            // provider 不可用（模块被冻结等）时退回远程配置，模块进程内自己调用仍能写进去
+            val viaRemote = runCatching {
                 moduleRef?.getRemotePreferences(Constants.PREFS_NAME)
                     ?.edit()
                     ?.putString(Constants.PREFS_KEY_CHOOSER_POS, pos)
-                    ?.commit()
-            }.onFailure { Log.w(TAG, "save chooser position failed", it) }
+                    ?.commit() == true
+            }.onFailure { dbg("remote prefs 写入抛异常: " + it) }.getOrDefault(false)
+            dbg("save 回退远程配置 ok=" + viaRemote)
         }
     }
 

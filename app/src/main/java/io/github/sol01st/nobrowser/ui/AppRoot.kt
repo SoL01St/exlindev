@@ -80,6 +80,9 @@ sealed interface Route {
 
     /** 模块日志页：只读展示 HookEngine 的判定日志。 */
     data object Logs : Route
+
+    /** 备份与恢复页：导出 / 导入 / 立即备份 / 从备份恢复。 */
+    data object Backup : Route
 }
 
 /** 路由层级，用于决定转场方向（进栈从右滑入，出栈从左滑入）。 */
@@ -382,23 +385,11 @@ fun AppRoot() {
                             )
                         } else {
                             SettingsScreen(
-                                apps = apps,
                                 store = store,
                                 listState = settingsListState,
                                 onOpenAbout = { route = Route.About },
                                 onOpenLogs = { route = Route.Logs },
-                                onRestore = { restored ->
-                                    persist(restored)
-                                    scope.launch {
-                                        val installedPkgs = installed.map { it.pkg }.toHashSet()
-                                        withContext(Dispatchers.IO) {
-                                            ScopeManager.syncAll(
-                                                restored.filter { it.enabled && it.packageName in installedPkgs }
-                                                    .map { it.packageName },
-                                            )
-                                        }
-                                    }
-                                },
+                                onOpenBackup = { route = Route.Backup },
                             )
                         }
                     }
@@ -438,6 +429,24 @@ fun AppRoot() {
                     is Route.Logs -> ModuleLogScreen(onBack = { route = Route.Root })
 
                     is Route.About -> AboutScreen(onBack = { route = Route.Root })
+
+                    is Route.Backup -> BackupScreen(
+                        apps = apps,
+                        store = store,
+                        onBack = { route = Route.Root },
+                        onRestore = { restored ->
+                            persist(restored)
+                            scope.launch {
+                                val installedPkgs = installed.map { it.pkg }.toHashSet()
+                                withContext(Dispatchers.IO) {
+                                    ScopeManager.syncAll(
+                                        restored.filter { it.enabled && it.packageName in installedPkgs }
+                                            .map { it.packageName },
+                                    )
+                                }
+                            }
+                        },
+                    )
 
                 }
             }

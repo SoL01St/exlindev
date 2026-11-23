@@ -25,7 +25,7 @@
 | | |
 | --- | --- |
 | 包名 | `io.github.sol01st.nobrowser` |
-| 运行环境 | LSPosed · libxposed API 102 |
+| 运行环境 | Xiaomi HyperOS 4 · Android 17 |
 | 系统 | Android 13+（minSdk 33 / targetSdk 34） |
 | 界面 | [Compose Multiplatform](https://github.com/JetBrains/compose-multiplatform) + [Miuix](https://github.com/compose-miuix-ui/miuix) 0.9.5 |
 
@@ -46,6 +46,7 @@
 
 1. 从 [Releases](https://github.com/SoL01St/exlindev/releases) 下载 APK 安装
 2. 在 LSPosed 中启用本模块，勾选所需应用作用域，重启目标应用
+3. 在模块内打开所需应用的接管开关
 
 ## 致谢
 

@@ -9,6 +9,11 @@
     <!-- 检查更新 -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- 保活策略：把本应用加进电池优化白名单（开关跳系统页授权）。
+         位置值的唯一权威副本在模块进程里，被 force-stop 后宿主连 provider 的
+         authority 都查不到，各应用就各记各的位置了。 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <application
         android:name=".App"
         android:allowBackup="true"
