@@ -4,7 +4,6 @@
 
 **ExLink · NoBrowser** — 把应用内置浏览器里的链接抢出来，交给你自己的浏览器
 
-[![Version](https://img.shields.io/badge/version-5.0.3-1f6feb)](https://github.com/SoL01St/exlindev/releases)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-3ddc84?logo=android&logoColor=white)](https://developer.android.com)
 [![LSPosed](https://img.shields.io/badge/LSPosed-API%20102-7c5cff)](https://github.com/libxposed/api)
 [![License](https://img.shields.io/badge/license-MIT-2ea043)](LICENSE)
@@ -14,7 +13,7 @@
 </div>
 
 <p align="center">
-  <img src="docs/screenshot-home.jpg" width="300" alt="首页" />
+  <img src="docs/screenshot-home.png" width="640" alt="界面" />
 </p>
 
 **默认接管：QQ、微信、QQ邮箱、百度贴吧、钉钉、TIM、闲鱼。其他应用点右下角 `+` 添加，需自行添加规则。**
@@ -26,7 +25,6 @@
 | | |
 | --- | --- |
 | 包名 | `io.github.sol01st.nobrowser` |
-| 版本 | 5.0.3（versionCode 35） |
 | 运行环境 | LSPosed · libxposed API 102 |
 | 系统 | Android 8.0+（minSdk 26 / targetSdk 34） |
 | 界面 | Jetpack Compose + [Miuix](https://github.com/compose-miuix-ui/miuix) |
@@ -56,7 +54,6 @@
 - 拦截规则与整体思路：[xloger/ExLink](https://github.com/xloger/ExLink)
 - 模块框架：[libxposed/api](https://github.com/libxposed/api)
 - 界面组件：[compose-miuix-ui/miuix](https://github.com/compose-miuix-ui/miuix)
-- 毛玻璃效果：[chrisbanes/haze](https://github.com/chrisbanes/haze)
 
 ## License
 
