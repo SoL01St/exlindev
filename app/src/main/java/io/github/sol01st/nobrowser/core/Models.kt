@@ -181,6 +181,9 @@ object Constants {
     const val KEY_EX_AUTO = "ExAuto"
     const val PREFS_NAME = "nxb_config"
     const val PREFS_KEY_RULES = "rules_json"
+
+    /** 选择框位置（可用区域内 0~1 的比例，形如 "0.5000,0.6200"），拖动后写回。 */
+    const val PREFS_KEY_CHOOSER_POS = "chooser_pos"
     const val SELF_PACKAGE = "io.github.sol01st.nobrowser"
     const val LSPD_DB = "/data/adb/lspd/config/modules_config.db"
 }

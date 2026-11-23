@@ -2,15 +2,28 @@ package io.github.sol01st.nobrowser.hook
 
 import android.app.Activity
 import android.app.Dialog
+import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Canvas
+import android.graphics.Outline
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.Window
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -76,6 +89,10 @@ internal object HookEngine {
     /** 宿主侧缓存的远程配置对象，避免每次拦截都重新跨进程取一遍。 */
     private var remotePrefs: android.content.SharedPreferences? = null
 
+    /** 保留模块入口，选择框拖动后要把位置写回同一份远程配置。 */
+    @Volatile
+    private var moduleRef: XposedModule? = null
+
     /** 上次加载的配置指纹，内容变了才重新解析。 */
     @Volatile
     private var configSignature = Int.MIN_VALUE
@@ -84,6 +101,7 @@ internal object HookEngine {
 
     fun onPackageLoaded(module: XposedModule, packageName: String, loader: ClassLoader) {
         if (packageName == Constants.SELF_PACKAGE) return
+        moduleRef = module
         val raw = readRawConfig(module)
         val app = decodeRules(raw).firstOrNull { it.packageName == packageName && it.enabled } ?: return
         currentApp = app
@@ -432,50 +450,145 @@ internal object HookEngine {
             true
         }.onFailure { Log.w(TAG, "ATM start failed, fallback to context", it) }.getOrDefault(false)
     }
+    /** 默认落点：可用区域中部偏下，单手拇指的自然位置。 */
+    private val DEFAULT_CHOOSER_RATIO = 0.5f to 0.62f
 
-    /** 液态玻璃风格选择框：背景实时模糊 + 半透明卡片。 */
+    /** 阴影留白：阴影在这个范围内自绘，窗口尺寸 = 胶囊尺寸 + 2 × 留白。 */
+    private const val CHOOSER_SHADOW_DP = 10
+
+    /** 未长按时允许的手指抖动范围，超过就判定为「在滑动列表」而不是在按胶囊。 */
+    private const val CHOOSER_SLOP_DP = 8
+
+    /** 长按多久后进入拖动；只有长按到点才会拖，不按不拖。 */
+    private const val CHOOSER_LONG_PRESS_MS = 250L
+
+    /** 允许拖出屏幕的水平余量。 */
+    private const val CHOOSER_OVERSCROLL_DP = 16
+
+    /** 图标显示尺寸。 */
+    private const val CHOOSER_ICON_DP = 28
+
+    /**
+     * 读选择框位置（可用区域内 0~1 的比例）。
+     *
+     * 刻意不做进程内缓存：位置是全局共享的，缓存会让已经在后台跑着的应用一直用旧值——
+     * 拖完只有当前应用立刻生效，其它应用得重启才跟上。RemotePreferences 本身就是内存读，
+     * 每次弹窗取一次字符串的开销可以忽略。
+     */
+    private fun loadChooserRatio(): Pair<Float, Float> {
+        val raw = runCatching {
+            (remotePrefs ?: moduleRef?.getRemotePreferences(Constants.PREFS_NAME))
+                ?.getString(Constants.PREFS_KEY_CHOOSER_POS, null)
+        }.getOrNull()
+        val ratio = raw?.split(',')?.let { parts ->
+            val rx = parts.getOrNull(0)?.trim()?.toFloatOrNull()
+            val ry = parts.getOrNull(1)?.trim()?.toFloatOrNull()
+            if (rx != null && ry != null) rx.coerceIn(0f, 1f) to ry.coerceIn(0f, 1f) else null
+        }
+        return ratio ?: DEFAULT_CHOOSER_RATIO
+    }
+
+    private fun saveChooserRatio(rx: Float, ry: Float) {
+        runCatching {
+            moduleRef?.getRemotePreferences(Constants.PREFS_NAME)
+                ?.edit()
+                ?.putString(Constants.PREFS_KEY_CHOOSER_POS, "$rx,$ry")
+                ?.commit()
+        }.onFailure { Log.w(TAG, "save chooser position failed", it) }
+    }
+
+    /**
+     * 系统默认浏览器的图标。没设默认浏览器时 resolveActivity 会返回系统 ResolverActivity，
+     * 那时拿到的图标和真实点击结果对不上，这里直接返回 null 让调用方回退到通用图标。
+     */
+    private fun defaultBrowserIcon(activity: Activity): Drawable? = runCatching {
+        val pm = activity.packageManager
+        val probe = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"))
+            .addCategory(Intent.CATEGORY_BROWSABLE)
+        val info = pm.resolveActivity(probe, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)
+            ?.activityInfo
+        val pkg = info?.packageName
+        val name = info?.name ?: ""
+        val looksLikeResolver = pkg.isNullOrEmpty() ||
+            pkg == "android" ||
+            pkg.contains("resolver", ignoreCase = true) ||
+            name.contains("Resolver", ignoreCase = true)
+        if (looksLikeResolver) null else pm.getApplicationIcon(pkg)
+    }.getOrNull()
+
+    /**
+     * 横排单胶囊选择框：左段宿主应用图标（= 应用内打开），右段系统默认浏览器图标（= 外部打开）。
+     *
+     * 阴影不靠 elevation —— 窗口尺寸卡死时 elevation 的阴影会被窗口矩形裁掉，只剩底下一道黑边。
+     * 这里照 LinkGo 的做法：View 自己留 10dp padding，在 onDraw 里用 setShadowLayer 画。
+     * 圆角取内部高度的一半，所以不论胶囊多高都是正圆端头。
+     */
     private fun showChooser(activity: Activity, origin: Intent, url: String) {
+        if (activity.isFinishing || activity.isDestroyed) return
         runCatching {
             val dark = (activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
                 Configuration.UI_MODE_NIGHT_YES
             val density = activity.resources.displayMetrics.density
             fun dp(v: Int) = (v * density + 0.5f).toInt()
 
-            val glassColor = if (dark) 0xF21C1C1E.toInt() else 0xF2FFFFFF.toInt()
-            val glassStroke = if (dark) 0x40FFFFFF else 0x99FFFFFF.toInt()
-            val softFill = if (dark) 0x1FFFFFFF else 0x0F000000
-            val softStroke = if (dark) 0x2AFFFFFF else 0x1F000000
-            val textColor = if (dark) 0xFFF5F5F7.toInt() else 0xFF111114.toInt()
+            val capsuleFill = if (dark) 0xFF1C1C1E.toInt() else 0xFFFFFFFF.toInt()
+            val capsuleStroke = if (dark) 0x28FFFFFF else 0x00000000
+            val pressFill = if (dark) 0x1AFFFFFF else 0x0F000000
+            val shadowColor = if (dark) 0x78000000 else 0x23000000
+            val glyphColor = if (dark) 0xFFF5F5F7.toInt() else 0xFF111114.toInt()
+            val dividerColor = if (dark) 0x1FFFFFFF else 0x12000000
+
+            val iconPx = dp(CHOOSER_ICON_DP)
+
+            // 把任意 Drawable（含 AdaptiveIcon）压成固定尺寸位图，ImageView 用 CENTER 就不会被放大
+            fun rasterize(source: Drawable): android.graphics.Bitmap {
+                val bmp = android.graphics.Bitmap.createBitmap(
+                    iconPx,
+                    iconPx,
+                    android.graphics.Bitmap.Config.ARGB_8888,
+                )
+                val canvas = Canvas(bmp)
+                source.setBounds(0, 0, iconPx, iconPx)
+                source.draw(canvas)
+                return bmp
+            }
+
+            val hostIcon = runCatching {
+                activity.packageManager.getApplicationIcon(activity.packageName)
+            }.getOrNull()
+            val hostIconBmp = hostIcon?.let { bmp -> runCatching { rasterize(bmp) }.getOrNull() }
+
+            // 优先用系统默认浏览器的图标，识别不出来才退回自绘的通用浏览器图标
+            val browserIcon = defaultBrowserIcon(activity)
+            val browserIconBmp = runCatching {
+                rasterize(browserIcon ?: BrowserGlyphDrawable(glyphColor))
+            }.getOrNull()
 
             val dialog = Dialog(activity)
             dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
 
-            val card = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(12), dp(12), dp(12), dp(12))
-                background = GradientDrawable().apply {
-                    cornerRadius = dp(30).toFloat()
-                    setColor(glassColor)
-                    setStroke(dp(1), glassStroke)
-                }
+            val card = DragCapsule(activity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                fillColor = capsuleFill
+                strokeColor = capsuleStroke
+                shadowColorValue = shadowColor
             }
 
-            fun option(
+            /** 胶囊的一半：圆角跟着高度走，只保留朝外两侧，按下时铺一层淡色。 */
+            fun segmentIcon(
+                bitmap: android.graphics.Bitmap?,
+                leftSide: Boolean,
                 label: String,
                 onClick: () -> Unit,
-            ) {
-                val bg = GradientDrawable().apply {
-                    cornerRadius = dp(20).toFloat()
-                    setColor(softFill)
-                    setStroke(dp(1), softStroke)
-                }
-                val tv = TextView(activity).apply {
-                    text = label
-                    textSize = 15.5f
-                    gravity = Gravity.CENTER
-                    setTextColor(textColor)
+            ): android.widget.ImageView {
+                val bg = HalfCapsuleDrawable(leftSide, 0x00000000, pressFill)
+                return android.widget.ImageView(activity).apply {
+                    setImageBitmap(bitmap)
+                    scaleType = android.widget.ImageView.ScaleType.CENTER
+                    contentDescription = label
                     background = bg
-                    setPadding(dp(12), dp(17), dp(12), dp(17))
+                    setPadding(dp(24), dp(10), dp(24), dp(10))
                     isClickable = true
                     isFocusable = true
                     setOnClickListener {
@@ -483,33 +596,360 @@ internal object HookEngine {
                         onClick()
                     }
                 }
-                val lp = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                )
-                if (card.childCount > 0) lp.topMargin = dp(9)
-                card.addView(tv, lp)
             }
 
-            option("应用内浏览器打开") {
+            val insideSeg = segmentIcon(hostIconBmp, true, "应用内打开") {
                 runCatching {
                     val again = Intent(origin).putExtra(Constants.EXTRA_GUARD, true)
                     activity.startActivity(again)
                 }.onFailure { Log.w(TAG, "reopen inside failed", it) }
             }
-            option("手机浏览器打开") { openExternal(activity, url) }
+            val externalSeg = segmentIcon(browserIconBmp, false, "浏览器打开") { openExternal(activity, url) }
+
+            val divider = View(activity).apply { setBackgroundColor(dividerColor) }
+
+            card.addView(
+                insideSeg,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
+            card.addView(
+                divider,
+                LinearLayout.LayoutParams(dp(1), dp(20)).apply { gravity = Gravity.CENTER_VERTICAL },
+            )
+            card.addView(
+                externalSeg,
+                LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ),
+            )
 
             dialog.setContentView(card)
             dialog.setCanceledOnTouchOutside(true)
+
+            val win = dialog.window ?: return@runCatching
+            win.setBackgroundDrawableResource(android.R.color.transparent)
+            win.setGravity(Gravity.TOP or Gravity.START)
+            win.attributes = win.attributes.apply { dimAmount = 0.10f }
+
+            val bounds = activity.windowManager.currentWindowMetrics.bounds
+            val bars = activity.window?.decorView?.rootWindowInsets
+                ?.getInsets(WindowInsets.Type.systemBars())
+            val screenW = bounds.width()
+            // Dialog 的坐标原点在状态栏下方，可用高度要扣掉系统栏
+            val availH = (bounds.height() - (bars?.top ?: 0) - (bars?.bottom ?: 0)).coerceAtLeast(1)
+
+            // 先离线测量、把位置算好再 show，否则会从屏幕正中闪一下再跳过来
+            card.measure(
+                View.MeasureSpec.makeMeasureSpec(screenW, View.MeasureSpec.AT_MOST),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            )
+            win.setLayout(
+                card.measuredWidth.coerceAtLeast(1),
+                card.measuredHeight.coerceAtLeast(1),
+            )
+
+            val shadowPad = dp(CHOOSER_SHADOW_DP)
+            val overscroll = dp(CHOOSER_OVERSCROLL_DP)
+            var maxX = (screenW - (card.measuredWidth - shadowPad * 2)).coerceAtLeast(0)
+            var maxY = (availH - (card.measuredHeight - shadowPad * 2)).coerceAtLeast(0)
+
+            // 对外一律用胶囊本身的视觉位置，窗口坐标 = 视觉坐标 - shadowPad
+            fun applyPos(x: Int, y: Int) {
+                val attrs = win.attributes
+                attrs.gravity = Gravity.TOP or Gravity.START
+                attrs.x = x.coerceIn(-overscroll, maxX + overscroll) - shadowPad
+                attrs.y = y.coerceIn(0, maxY) - shadowPad
+                win.attributes = attrs
+            }
+
+            val (ratioX, ratioY) = loadChooserRatio()
+            applyPos((ratioX * maxX).toInt(), (ratioY * maxY).toInt())
+
             dialog.show()
 
-            dialog.window?.let { w ->
-                w.setBackgroundDrawableResource(android.R.color.transparent)
-                w.setLayout(dp(296), WindowManager.LayoutParams.WRAP_CONTENT)
-                val attrs = w.attributes
-                attrs.dimAmount = 0.12f
-                w.attributes = attrs
+            // 真正上屏后按实际尺寸再校正一次边界
+            card.post {
+                maxX = (screenW - (card.width - shadowPad * 2)).coerceAtLeast(0)
+                maxY = (availH - (card.height - shadowPad * 2)).coerceAtLeast(0)
+                applyPos((ratioX * maxX).toInt(), (ratioY * maxY).toInt())
             }
-        }.onFailure { Log.w(TAG, "dialog failed", it) }
+
+            var dragStartX = 0
+            var dragStartY = 0
+            card.onDragStart = {
+                dragStartX = win.attributes.x + shadowPad
+                dragStartY = win.attributes.y + shadowPad
+            }
+            card.onDrag = { dx, dy -> applyPos((dragStartX + dx).toInt(), (dragStartY + dy).toInt()) }
+            card.onDragEnd = {
+                // 松手吸附：拖出边界或贴到边缘 16dp 以内就归位到边上
+                val snap = dp(CHOOSER_OVERSCROLL_DP)
+                val current = win.attributes
+                var x = current.x + shadowPad
+                val y = current.y + shadowPad
+                if (x <= snap) x = 0 else if (x >= maxX - snap) x = maxX
+                applyPos(x, y)
+                val rx = if (maxX > 0) x.toFloat() / maxX else DEFAULT_CHOOSER_RATIO.first
+                val ry = if (maxY > 0) y.toFloat() / maxY else DEFAULT_CHOOSER_RATIO.second
+                saveChooserRatio(rx, ry)
+            }
+        }.onFailure { Log.w(TAG, "chooser failed", it) }
+    }
+
+    /**
+     * 可拖动的横排胶囊。
+     *
+     * 阴影在 [onDraw] 里用 setShadowLayer 自绘（而不是 elevation，后者会被窗口矩形裁成黑边），
+     * 外面留 [CHOOSER_SHADOW_DP] 的 padding 当绘制区；圆角取内部高度的一半。
+     *
+     * 触摸：只有按住 [CHOOSER_LONG_PRESS_MS] 才会进入拖动。没长按就移动只当成「在滑动宿主列表」，
+     * 仅取消长按判定、不位移胶囊，这样就不会在别人列表上滑一下就把胶囊拖走。
+     */
+    private class DragCapsule(context: Context) : LinearLayout(context) {
+
+        var onDragStart: (() -> Unit)? = null
+        var onDrag: ((Float, Float) -> Unit)? = null
+        var onDragEnd: (() -> Unit)? = null
+
+        private val density = resources.displayMetrics.density
+        private val shadowPadPx = (CHOOSER_SHADOW_DP * density + 0.5f).toInt()
+        private val dragSlop = (CHOOSER_SLOP_DP * density + 0.5f).toInt()
+
+        private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG).apply {
+            style = Paint.Style.FILL
+        }
+        private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG).apply {
+            style = Paint.Style.FILL
+        }
+        private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.DITHER_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = density
+        }
+
+        private val capsulePath = Path()
+        private val capsuleRect = RectF()
+
+        var fillColor: Int = 0
+            set(value) {
+                field = value
+                bgPaint.color = value
+                invalidate()
+            }
+
+        var strokeColor: Int = 0
+            set(value) {
+                field = value
+                borderPaint.color = value
+                invalidate()
+            }
+
+        var shadowColorValue: Int = 0
+            set(value) {
+                field = value
+                // 填充色与阴影同色，避免路径抗锯齿边缘叠出纯黑锯齿（LinkGo 的处理）
+                shadowPaint.color = value
+                shadowPaint.setShadowLayer(8 * density, 0f, 2.5f * density, value)
+                invalidate()
+            }
+
+        private var downRawX = 0f
+        private var downRawY = 0f
+        private var dragging = false
+
+        private val longPressRunnable = Runnable {
+            if (!dragging) {
+                dragging = true
+                onDragStart?.invoke()
+                parent?.requestDisallowInterceptTouchEvent(true)
+                performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            }
+        }
+
+        init {
+            setWillNotDraw(false)
+            clipChildren = false
+            clipToPadding = false
+            setPadding(shadowPadPx, shadowPadPx, shadowPadPx, shadowPadPx)
+        }
+
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            super.onSizeChanged(w, h, oldw, oldh)
+            capsuleRect.set(
+                paddingLeft.toFloat(),
+                paddingTop.toFloat(),
+                (w - paddingRight).toFloat(),
+                (h - paddingBottom).toFloat(),
+            )
+            capsulePath.reset()
+            val radius = capsuleRect.height() / 2f
+            capsulePath.addRoundRect(capsuleRect, radius, radius, Path.Direction.CW)
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            if (width <= 0 || height <= 0 || capsuleRect.height() <= 0f) return
+            canvas.drawPath(capsulePath, shadowPaint)
+            canvas.drawPath(capsulePath, bgPaint)
+            if ((strokeColor ushr 24) != 0) canvas.drawPath(capsulePath, borderPaint)
+        }
+
+        override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawX = ev.rawX
+                    downRawY = ev.rawY
+                    dragging = false
+                    removeCallbacks(longPressRunnable)
+                    postDelayed(longPressRunnable, CHOOSER_LONG_PRESS_MS)
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    if (!dragging &&
+                        (kotlin.math.abs(ev.rawX - downRawX) > dragSlop ||
+                            kotlin.math.abs(ev.rawY - downRawY) > dragSlop)
+                    ) {
+                        // 没长按就滑动：只取消长按判定，绝不位移胶囊
+                        removeCallbacks(longPressRunnable)
+                    }
+                }
+
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> removeCallbacks(longPressRunnable)
+            }
+            return dragging
+        }
+
+        override fun onTouchEvent(ev: MotionEvent): Boolean {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_MOVE -> if (dragging) onDrag?.invoke(ev.rawX - downRawX, ev.rawY - downRawY)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    removeCallbacks(longPressRunnable)
+                    if (dragging) {
+                        dragging = false
+                        onDragEnd?.invoke()
+                    }
+                }
+            }
+            return true
+        }
+
+        override fun onDetachedFromWindow() {
+            removeCallbacks(longPressRunnable)
+            super.onDetachedFromWindow()
+        }
+    }
+
+    /**
+     * 胶囊的一半：只保留朝外一侧的全圆角，半径按实际高度算，所以胶囊变高变矮都贴合。
+     */
+    private class HalfCapsuleDrawable(
+        private val leftSide: Boolean,
+        private val normalColor: Int,
+        private val pressedColor: Int,
+    ) : Drawable() {
+
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val path = Path()
+        private val rect = RectF()
+        private var pressed = false
+        private var alphaValue = 255
+
+        override fun draw(canvas: Canvas) {
+            val h = bounds.height().toFloat()
+            if (h <= 0f) return
+            val radius = h / 2f
+            rect.set(bounds)
+            path.reset()
+            val radii = if (leftSide) {
+                floatArrayOf(radius, radius, 0f, 0f, 0f, 0f, radius, radius)
+            } else {
+                floatArrayOf(0f, 0f, radius, radius, radius, radius, 0f, 0f)
+            }
+            path.addRoundRect(rect, radii, Path.Direction.CW)
+            paint.color = withAlpha(if (pressed) pressedColor else normalColor)
+            canvas.drawPath(path, paint)
+        }
+
+        private fun withAlpha(color: Int): Int {
+            val a = (color ushr 24) * alphaValue / 255
+            return (a shl 24) or (color and 0x00FFFFFF)
+        }
+
+        override fun isStateful(): Boolean = true
+
+        override fun onStateChange(state: IntArray): Boolean {
+            val now = state.contains(android.R.attr.state_pressed)
+            if (now != pressed) {
+                pressed = now
+                invalidateSelf()
+            }
+            return true
+        }
+
+        override fun setAlpha(alpha: Int) {
+            if (alphaValue == alpha) return
+            alphaValue = alpha
+            invalidateSelf()
+        }
+
+        override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {
+            paint.colorFilter = colorFilter
+            invalidateSelf()
+        }
+
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+    }
+
+    /**
+     * 兜底用的通用浏览器图标：圆角窗口 + 顶部地址栏，单色描边，按 bounds 等比缩放。
+     * 只在识别不到系统默认浏览器（例如用户设成「每次询问」）时才会用到。
+     */
+    private class BrowserGlyphDrawable(private val colorInt: Int) : Drawable() {
+
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeJoin = Paint.Join.ROUND
+            color = colorInt
+        }
+        private val rect = RectF()
+
+        override fun draw(canvas: Canvas) {
+            val w = bounds.width().toFloat()
+            val h = bounds.height().toFloat()
+            if (w <= 0f || h <= 0f) return
+            val size = minOf(w, h)
+            val scale = size / 24f
+            val offsetX = bounds.left + (w - size) / 2f
+            val offsetY = bounds.top + (h - size) / 2f
+
+            canvas.save()
+            canvas.translate(offsetX, offsetY)
+            paint.strokeWidth = 1.8f * scale
+            val inset = 2.6f * scale
+            rect.set(inset, inset, size - inset, size - inset)
+            val corner = 4.2f * scale
+            canvas.drawRoundRect(rect, corner, corner, paint)
+            // 地址栏分隔线
+            canvas.drawLine(inset + 0.4f * scale, 9.2f * scale, size - inset - 0.4f * scale, 9.2f * scale, paint)
+            canvas.restore()
+        }
+
+        override fun setAlpha(alpha: Int) {
+            paint.alpha = alpha
+            invalidateSelf()
+        }
+
+        override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) {
+            paint.colorFilter = colorFilter
+            invalidateSelf()
+        }
+
+        @Deprecated("Deprecated in Java")
+        override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
     }
 }
