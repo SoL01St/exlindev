@@ -26,8 +26,8 @@
 | --- | --- |
 | 包名 | `io.github.sol01st.nobrowser` |
 | 运行环境 | LSPosed · libxposed API 102 |
-| 系统 | Android 8.0+（minSdk 26 / targetSdk 34） |
-| 界面 | Jetpack Compose + [Miuix](https://github.com/compose-miuix-ui/miuix) |
+| 系统 | Android 13+（minSdk 33 / targetSdk 34） |
+| 界面 | [Compose Multiplatform](https://github.com/JetBrains/compose-multiplatform) + [Miuix](https://github.com/compose-miuix-ui/miuix) 0.9.5 |
 
 ## 特性
 
