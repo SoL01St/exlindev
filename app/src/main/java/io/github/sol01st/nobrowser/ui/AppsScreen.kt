@@ -1,23 +1,15 @@
 package io.github.sol01st.nobrowser.ui
 
+import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import androidx.compose.foundation.background
-import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.rememberHazeState
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.runtime.derivedStateOf
-import dev.chrisbanes.haze.HazeState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,8 +18,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,10 +32,7 @@ import androidx.compose.ui.unit.sp
 import io.github.sol01st.nobrowser.core.TargetApp
 import io.github.sol01st.nobrowser.data.InstalledApps
 import top.yukonga.miuix.kmp.basic.BasicComponent
-import top.yukonga.miuix.kmp.basic.Card
-import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.PullToRefresh
-import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.ListPopupColumn
 import top.yukonga.miuix.kmp.basic.PopupPositionProvider
@@ -75,7 +62,6 @@ fun AppsScreen(
     onRemoveApp: (String) -> Unit,
     onBuiltInLongPress: () -> Unit,
     onAdd: () -> Unit,
-    hazeState: HazeState,
 ) {
     val installedMap = installed.associateBy { it.pkg }
     val enabledCount = apps.count { it.enabled && it.packageName in installedMap }
@@ -86,34 +72,21 @@ fun AppsScreen(
 
     // 长按菜单：锚定到被长按的那一行
     var menuPkg by remember { mutableStateOf<String?>(null) }
-    // 顶栏自带一个 haze 源，和内容同级，模糊才能采样到
-    val topHaze = rememberHazeState()
-    val density = LocalDensity.current
-    // 连续折叠：滚过多少就折叠多少（阈值 50dp）
-    val collapse by remember(listState, density) {
-        derivedStateOf {
-            if (listState.firstVisibleItemIndex > 0) {
-                1f
-            } else {
-                (listState.firstVisibleItemScrollOffset / with(density) { 50.dp.toPx() })
-                    .coerceIn(0f, 1f)
-            }
-        }
-    }
-    Box(Modifier.fillMaxSize()) {
-        Scaffold(
-            containerColor = MiuixTheme.colorScheme.background,
-            contentWindowInsets = WindowInsets(0),
-        ) { padding ->
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .hazeSource(topHaze),
-            ) {
-            PullToRefresh(
+    // 官方折叠：MiuixScrollBehavior 驱动「大标题 → 上滑折叠成小标题」
+    val scrollBehavior = MiuixScrollBehavior()
+    NxbPageScaffold(
+        title = ScreenTitle,
+        largeTitle = ScreenTitle,
+        subtitle = if (installedLoaded) "已接管 $enabledCount 个应用" else "正在读取应用列表…",
+        fallbackBarHeight = 196.dp,
+        scrollBehavior = scrollBehavior,
+    ) { barHeight ->
+        PullToRefresh(
                 isRefreshing = refreshing,
                 onRefresh = onRefresh,
                 modifier = Modifier.fillMaxSize(),
+                // 折叠由 PullToRefresh 统一驱动，不要再给 LazyColumn 挂 nestedScroll
+                topAppBarScrollBehavior = scrollBehavior,
                 refreshTexts = RefreshTexts,
             ) {
                 LazyColumn(
@@ -122,7 +95,7 @@ fun AppsScreen(
                     contentPadding = PaddingValues(
                         start = 0.dp,
                         end = 0.dp,
-                        top = 68.dp + 4.dp,
+                        top = barHeight + 4.dp,
                         bottom = listBottomPadding(100.dp),
                     ),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -194,16 +167,6 @@ fun AppsScreen(
                     item { Spacer(Modifier.height(8.dp)) }
                 }
             }
-
-            }
-        }
-
-        NxbTopBar(
-            title = ScreenTitle,
-            subtitle = if (installedLoaded) "已接管 $enabledCount 个应用" else "正在读取应用列表…",
-            collapse = collapse,
-            hazeState = topHaze,
-        )
     }
 }
 

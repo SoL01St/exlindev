@@ -1,14 +1,20 @@
 package io.github.sol01st.nobrowser.ui
 
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.ui.unit.Dp
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.ui.draw.shadow
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.border
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
@@ -18,18 +24,12 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
@@ -37,23 +37,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.rememberHazeState
 import io.github.sol01st.nobrowser.core.TargetApp
 import io.github.sol01st.nobrowser.data.InstalledApps
 import io.github.sol01st.nobrowser.data.ModuleState
@@ -64,10 +55,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.NavigationBar
-import top.yukonga.miuix.kmp.basic.NavigationBarItem
 import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.basic.SnackbarHost
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.material.isRuntimeShaderSupported
+import top.yukonga.miuix.kmp.glass.GlassNavigationItem
+import top.yukonga.miuix.kmp.glass.GlassNavigationBarDefaults
+import top.yukonga.miuix.kmp.glass.GlassNavigationBar
+import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
+import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.blur.Backdrop
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.clickable
 
 enum class Tab { Apps, Settings }
 
@@ -87,19 +87,10 @@ fun AppRoot() {
     val context = LocalContext.current
     val store = remember { RuleStore(context) }
     val scope = rememberCoroutineScope()
-    // 提示条毛玻璃的采样源：整个内容层是背景，提示条自身不参与采样
-    val hazeState = rememberHazeState()
 
     var apps by remember { mutableStateOf(store.load().toList()) }
     var tab by remember { mutableStateOf(Tab.Apps) }
     var route by remember { mutableStateOf<Route>(Route.Root) }
-
-    LaunchedEffect(HintState.token) {
-        if (HintState.text != null) {
-            kotlinx.coroutines.delay(2400)
-            HintState.clear()
-        }
-    }
 
     var installed by remember { mutableStateOf<List<InstalledApps.Item>>(emptyList()) }
     var moduleEnabled by remember { mutableStateOf<Boolean?>(null) }
@@ -300,14 +291,39 @@ fun AppRoot() {
         syncScope(pkg, true)
     }
 
+    // 底栏玻璃的采样源：录制**整页**（含每页自己的顶栏），底栏与它自己不在录制范围内，
+    // 避免玻璃把自身录进背景。不支持运行时着色器时退化为 null（底栏自动用不透明材质）。
+    val shaderOk = remember { isRuntimeShaderSupported() }
+    val pageBg = MiuixTheme.colorScheme.background
+    val barBackdrop = if (shaderOk) {
+        rememberLayerBackdrop {
+            drawRect(pageBg)
+            drawContent()
+        }
+    } else {
+        null
+    }
+
     Box(Modifier.fillMaxSize()) {
     // 底栏是浮层，不占布局高度：一二级页可用高度完全一致，
     // 进出二级页时列表锚点不会被视口高度变化顶动。
-    Scaffold(containerColor = MiuixTheme.colorScheme.background) { padding ->
+    // 注意：外层不能再让状态栏，否则会和 Miuix TopAppBar 内置的
+    // windowInsetsPadding(systemBars.only(Top)) 叠加，顶栏整体下移一个状态栏高度。
+    Scaffold(
+        containerColor = MiuixTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets.systemBars
+            .union(WindowInsets.displayCutout)
+            .only(WindowInsetsSides.Horizontal),
+    ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
+            // 页面内容进录制层；底栏、FAB、提示条都留在这层外面（否则会被录进玻璃背景）
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(if (barBackdrop != null) Modifier.layerBackdrop(barBackdrop) else Modifier),
+            ) {
             AnimatedContent(
                 targetState = route,
-                modifier = Modifier.hazeSource(hazeState),
                 transitionSpec = {
                     // 横滑推进：进二级页时新页从右侧推入，返回时反向推出
                     val forward = initialState is Route.Root
@@ -360,7 +376,6 @@ fun AppRoot() {
                                     tap()
                                     route = Route.Add
                                 },
-                                hazeState = hazeState,
                             )
                         } else {
                             SettingsScreen(
@@ -423,145 +438,123 @@ fun AppRoot() {
 
                 }
             }
-
-
-            HintState.text?.let { message ->
-                HintBar(
-                    text = message,
-                    hazeState = hazeState,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        // 底栏叠在内容之上，提示条要让开它的高度
-                        .padding(bottom = if (route is Route.Root) AppBottomBarHeight else 0.dp),
-                )
             }
-        }
-    }
 
-        // 首页底栏：浮层形式压在内容上，不影响任何页面的可用高度
-        if (route is Route.Root) {
-            BottomBar(
-                current = tab,
+            // 提示条：队列 / 时长 / 滑动消失交给官方 SnackbarHost
+            SnackbarHost(
+                state = HintState.host,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .zIndex(1f),
-                onSelect = { tab = it },
-                onAdd = { route = Route.Add },
-                hazeState = hazeState,
+                    .zIndex(2f)
+                    // 首页底栏是浮层（胶囊 + 浮动留白约 120dp），提示条要整体落在它上方
+                    .padding(bottom = if (route is Route.Root) bottomBarReservedHeight() + 76.dp else 0.dp),
             )
         }
     }
-}
 
-@Composable
-private fun HintBar(
-    text: String,
-    hazeState: HazeState,
-    modifier: Modifier = Modifier,
-) {
-    val shape = RoundedCornerShape(24.dp)
-    val surface = MiuixTheme.colorScheme.surface
-    val tint = HazeTint(surface.copy(alpha = 0.45f))
-    Box(
-        modifier
-            .padding(start = 28.dp, end = 28.dp, bottom = 24.dp)
-            .clip(shape)
-            // 真毛玻璃：采样下面那层内容再模糊，底下的字被糊掉，就不会和提示文字叠在一起
-            .hazeEffect(state = hazeState) {
-                // 0.4 + 0.4 ≈ 0.8 的白，配上 30dp 模糊：底下的字被糊掉又不会觉得提示条是块死白
-                blurRadius = 30.dp
-                backgroundColor = surface.copy(alpha = 0.40f)
-                tints = listOf(HazeTint(surface.copy(alpha = 0.40f)))
-                noiseFactor = 0.02f
+        // 首页底栏：0.9.4 的 FloatingNavigationBar，浮层压在内容上，不影响任何页面的可用高度
+        if (route is Route.Root) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .zIndex(1f)
+                    .fillMaxWidth(),
+                contentAlignment = Alignment.Center,
+            ) {
+                BottomBar(
+                    current = tab,
+                    backdrop = barBackdrop,
+                    onSelect = { tab = it },
+                )
             }
-            .border(0.5.dp, MiuixTheme.colorScheme.onSurface.copy(alpha = 0.12f), shape)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
-    ) {
-        AppText(text, fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurface, maxLines = 2)
+            // 加号：只出现在首页（模块列表页）右下角，浮在底栏之上
+            if (tab == Tab.Apps) {
+                // 定位交给外层 Box：FAB 自己只拿一个干净的 Modifier（内部会 .size()）
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 20.dp)
+                        .padding(bottom = bottomBarReservedHeight() + 12.dp),
+                ) {
+                    AddAppFab(
+                        onClick = {
+                            tap()
+                            route = Route.Add
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 
 @Composable
 private fun BottomBar(
     current: Tab,
-    modifier: Modifier = Modifier,
+    backdrop: Backdrop?,
     onSelect: (Tab) -> Unit,
-    onAdd: () -> Unit,
-    hazeState: HazeState,
 ) {
-    val surface = MiuixTheme.colorScheme.surface
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .navigationBarsPadding()
-            .padding(horizontal = 24.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Row(
-            Modifier
-                .weight(1f)
-                .height(64.dp)
-                .shadow(2.dp, RoundedCornerShape(32.dp))
-                .clip(RoundedCornerShape(32.dp))
-                .hazeEffect(state = hazeState) {
-                    blurRadius = 24.dp
-                    backgroundColor = surface.copy(alpha = 0.45f)
-                    tints = listOf(HazeTint(surface.copy(alpha = 0.45f)))
-                    noiseFactor = 0.02f
-                }
-                .border(0.5.dp, MiuixTheme.colorScheme.onSurface.copy(alpha = 0.12f), RoundedCornerShape(32.dp)),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TabItem("首页", Icons.Default.Home, current == Tab.Apps) { onSelect(Tab.Apps) }
-            TabItem("设置", Icons.Default.Settings, current == Tab.Settings) { onSelect(Tab.Settings) }
-        }
-        Box(
-            Modifier
-                .size(64.dp)
-                .shadow(2.dp, CircleShape)
-                .clip(CircleShape)
-                .hazeEffect(state = hazeState) {
-                    blurRadius = 24.dp
-                    backgroundColor = surface.copy(alpha = 0.45f)
-                    tints = listOf(HazeTint(surface.copy(alpha = 0.45f)))
-                    noiseFactor = 0.02f
-                }
-                .border(0.5.dp, MiuixTheme.colorScheme.onSurface.copy(alpha = 0.12f), CircleShape)
-                .clickable { onAdd() },
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                Icons.Default.Add,
-                contentDescription = "添加应用",
-                tint = MiuixTheme.colorScheme.onSurface,
-            )
-        }
-    }
+    val tap = rememberTapHaptics()
+    // 官方玻璃悬浮导航条：胶囊自适应宽度居中，选中态是玻璃指示胶囊
+    GlassNavigationBar(
+        items = listOf(
+            GlassNavigationItem(
+                icon = Icons.Default.Home,
+                label = "首页",
+                contentDescription = "首页",
+            ),
+            GlassNavigationItem(
+                icon = Icons.Default.Settings,
+                label = "设置",
+                contentDescription = "设置",
+            ),
+        ),
+        selectedIndex = if (current == Tab.Apps) 0 else 1,
+        onSelect = { index ->
+            tap()
+            onSelect(if (index == 0) Tab.Apps else Tab.Settings)
+        },
+        backdrop = backdrop,
+        // GlassNavigationBar 内部强制 fillMaxWidth，用固定宽度保持原来紧凑胶囊的观感
+        modifier = Modifier.width(220.dp),
+    )
 }
 
+/** 底栏（玻璃胶囊 + 浮动留白）从屏幕底边算起占掉的高度，与 GlassNavigationBar 内部公式一致。 */
 @Composable
-private fun TabItem(
-    label: String,
-    icon: ImageVector,
-    selected: Boolean,
+private fun bottomBarReservedHeight(): Dp {
+    val nav = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val floatingMargin = when {
+        nav <= 16.dp -> 28.dp
+        nav >= 28.dp -> nav
+        else -> 12.dp + nav
+    }
+    return GlassNavigationBarDefaults.Height + floatingMargin
+}
+
+/** 首页右下角的加号：KSU 模块页那种独立浮动按钮，不占底栏。 */
+@Composable
+private fun AddAppFab(
+    modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
-    val color = if (selected) {
-        MiuixTheme.colorScheme.onSurface
-    } else {
-        MiuixTheme.colorScheme.onSurface.copy(alpha = 0.4f)
-    }
-    Column(
-        Modifier
-            .clip(RoundedCornerShape(24.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    // 自绘圆钮：官方 FloatingActionButton 是 Surface，外面加 border 会被它的背景盖住，
+    // 这里直接用 Box 画「底色 + 0.5dp 描边」，深色下才不会和同色的卡片融成一片。
+    Box(
+        modifier = modifier
+            .size(60.dp)
+            .shadow(4.dp, CircleShape, clip = false)
+            .clip(CircleShape)
+            .background(MiuixTheme.colorScheme.surfaceContainer)
+            .border(0.5.dp, cardOutlineColor(), CircleShape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.height(2.dp))
-        AppText(label, fontSize = 11.sp, color = color)
+        Icon(
+            Icons.Default.Add,
+            contentDescription = "添加应用",
+            modifier = Modifier.size(26.dp),
+            tint = MiuixTheme.colorScheme.onSurface,
+        )
     }
 }

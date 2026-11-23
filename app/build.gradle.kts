@@ -10,14 +10,15 @@ plugins {
 android {
     namespace = "io.github.sol01st.nobrowser"
     compileSdk = 37
+    compileSdkMinor = 2
     buildToolsVersion = "36.0.0"
 
     defaultConfig {
         applicationId = "io.github.sol01st.nobrowser"
-        minSdk = 26
+        minSdk = 33
         targetSdk = 34
-        versionCode = 35
-        versionName = "5.0.3"
+        versionCode = 36
+        versionName = "5.0.4"
     }
 
     // AGP 9 起 defaultConfig.resourceConfigurations 被移除，改用 androidResources.localeFilters
@@ -103,8 +104,13 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core:1.7.8")
     implementation("androidx.activity:activity-compose:1.12.4")
     implementation("androidx.core:core-ktx:1.16.0")
-    implementation("top.yukonga.miuix.kmp:miuix-ui:0.9.3")
-    implementation("top.yukonga.miuix.kmp:miuix-preference:0.9.3")
+    // A 步：升到 0.9.5-beta01，顶栏改用官方 GlassTopAppBar + progressiveBlur（miuix-glass / miuix-blur）
+    implementation("top.yukonga.miuix.kmp:miuix-ui:0.9.5-beta01")
+    implementation("top.yukonga.miuix.kmp:miuix-preference:0.9.5-beta01")
+    implementation("top.yukonga.miuix.kmp:miuix-icons:0.9.5-beta01")
+    implementation("top.yukonga.miuix.kmp:miuix-glass:0.9.5-beta01")
+    implementation("top.yukonga.miuix.kmp:miuix-blur:0.9.5-beta01")
+    implementation("top.yukonga.miuix.kmp:miuix-material:0.9.5-beta01")
     // 真毛玻璃：提示条采样自己下层的内容再模糊（Android 12+ 走 RenderEffect，低版本自动回退成半透明底）
     implementation("dev.chrisbanes.haze:haze:1.6.10")
 

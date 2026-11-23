@@ -1,21 +1,15 @@
 package io.github.sol01st.nobrowser.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.runtime.derivedStateOf
-import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.rememberHazeState
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.statusBars
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -46,7 +40,6 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import top.yukonga.miuix.kmp.basic.BasicComponent
-import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
@@ -112,27 +105,22 @@ fun SettingsScreen(
         pendingImport = parsed
     }
 
-    val topHaze = rememberHazeState()
-    val density = LocalDensity.current
-    val collapse by remember(listState, density) {
-        derivedStateOf {
-            if (listState.firstVisibleItemIndex > 0) 1f
-            else (listState.firstVisibleItemScrollOffset / with(density) { 50.dp.toPx() }).coerceIn(0f, 1f)
-        }
-    }
-
-    Scaffold(
-        containerColor = MiuixTheme.colorScheme.background,
-        contentWindowInsets = WindowInsets(0),
-    ) { padding ->
-        Box(Modifier.fillMaxSize()) {
+    // 和首页一致：官方 TopAppBar + MiuixScrollBehavior，大标题上滑折叠成中间小标题
+    val scrollBehavior = MiuixScrollBehavior()
+    NxbPageScaffold(
+        title = "设置",
+        largeTitle = "设置",
+        scrollBehavior = scrollBehavior,
+    ) { barHeight ->
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize().hazeSource(topHaze),
+            modifier = Modifier
+                .fillMaxSize()
+                .nestedScroll(scrollBehavior.nestedScrollConnection),
             contentPadding = PaddingValues(
                 start = 0.dp,
                 end = 0.dp,
-                top = 50.dp + 4.dp,
+                top = barHeight + 10.dp,
                 // 底栏是浮层，不参与 Scaffold padding：这里显式让开底栏高度
                 bottom = listBottomPadding(100.dp),
             ),
@@ -248,12 +236,6 @@ fun SettingsScreen(
             }
 
             item { Spacer(Modifier.height(8.dp)) }
-        }
-        NxbTopBar(
-            title = "设置",
-            collapse = collapse,
-            hazeState = topHaze,
-        )
         }
     }
 

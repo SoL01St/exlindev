@@ -1,28 +1,34 @@
 package io.github.sol01st.nobrowser.ui
 
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import top.yukonga.miuix.kmp.basic.SnackbarDuration
+import top.yukonga.miuix.kmp.basic.SnackbarHostState
 
 /**
- * 全局轻提示。用应用内自绘的提示条代替系统 Toast，
- * 避免系统 Toast 强制带应用图标、风格不统一。
+ * 全局轻提示。
+ *
+ * 队列、显示时长、滑动手势、无障碍播报全部交给 Miuix 官方的 [SnackbarHostState]，
+ * 这里只保留一个进程内的单例入口，调用方式和以前一样（[show] 是普通函数，不要求协程上下文）。
+ * 视觉直接用官方 Snackbar（不透明 squircle 表面），保证在任何背景上的可读性。
  */
 object HintState {
 
-    var text by mutableStateOf<String?>(null)
-        private set
+    val host = SnackbarHostState()
 
-    /** 每次调用自增，用于相同文案也能重新计时。 */
-    var token by mutableStateOf(0)
-        private set
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     fun show(message: String) {
-        text = message
-        token++
+        scope.launch {
+            host.showSnackbar(
+                message = message,
+                duration = SnackbarDuration.Custom(ShowMillis),
+            )
+        }
     }
 
-    fun clear() {
-        text = null
-    }
+    /** 与原自绘提示条一致：2.4 秒后自动消失。 */
+    private const val ShowMillis = 2400L
 }

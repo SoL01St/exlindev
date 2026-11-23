@@ -1,11 +1,11 @@
 package io.github.sol01st.nobrowser.ui
 
+import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import androidx.compose.foundation.Image
-import androidx.compose.ui.graphics.graphicsLayer
-import dev.chrisbanes.haze.hazeEffect
-import dev.chrisbanes.haze.HazeTint
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.HazeProgressive
+import top.yukonga.miuix.kmp.basic.Scaffold
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
@@ -17,21 +17,18 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -44,7 +41,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -71,6 +67,11 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import top.yukonga.miuix.kmp.material.isRuntimeShaderSupported
+import top.yukonga.miuix.kmp.glass.GlassTopAppBar
+import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
+import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.blur.LayerBackdrop
 
 /** 统一文本组件，显式行高避免大字号下被裁切。 */
 @Composable
@@ -115,13 +116,11 @@ fun rememberTapHaptics(): () -> Unit {
 fun listBottomPadding(extra: Dp = 12.dp): Dp =
     WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + extra
 
-/** 首页底栏总高度（不含系统导航栏 inset）。底栏现在是浮层，列表底部 padding 要让它让开。 */
-val AppBottomBarHeight = 64.dp
 
 /** 卡片描边透明度：深色下必须更明显，否则卡片和背景分不开。 */
 @Composable
 fun cardOutlineColor() = MiuixTheme.colorScheme.onSurface.copy(
-    alpha = if (LocalDarkTheme.current) 0.16f else 0.07f,
+    alpha = if (LocalDarkTheme.current) 0.10f else 0.04f,
 )
 
 /** 统一卡片容器：Miuix Card + 外层描边（Card 会裁掉自己的描边，所以套一层 Box）。 */
@@ -143,7 +142,7 @@ fun NxbCard(
         Modifier
     } else {
         Modifier.shadow(
-            elevation = 3.dp,
+            elevation = 1.dp,
             shape = shape,
             clip = false,
             ambientColor = Color.Black,
@@ -213,7 +212,7 @@ fun GroupDivider(startIndent: Dp = 16.dp) {
     HorizontalDivider(
         modifier = Modifier.padding(start = startIndent, end = 16.dp),
         thickness = 0.5.dp,
-        color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+        color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.05f),
     )
 }
 
@@ -465,133 +464,76 @@ fun LabelValue(label: String, value: String, valueColor: Color = MiuixTheme.colo
 }
 
 /**
- * 折叠比例：列表首项滚过 [threshold] 后为 1，用于大标题 → 左上角小标题的过渡。
+ * 顶栏：内容区左侧大标题，上滑后折叠成中间小标题。
+ *
+ * 用的是 Miuix 官方 [TopAppBar]（KernelSU 的顶栏也是这套：TopAppBar + MiuixScrollBehavior），
+ * 折叠比例、标题切换、弹簧动画全在组件内部，调用方只负责把 scrollBehavior 接到滚动容器上。
+ *
+ * 结构上顶栏**不在布局流里**：调用方把它当浮层叠在内容之上（见各页的 `Box` 叠层），
+ * 内容从屏幕顶端开始画、靠实测的 `barHeight` 留白。这样滚动时内容会从顶栏底下穿过去 ——
+ * 后面换成 `GlassTopAppBar` + `progressiveBlur` 时才有东西可采样。
  */
 @Composable
-fun rememberCollapseFraction(state: LazyListState, threshold: Dp = 96.dp): Float {
-    val thresholdPx = with(LocalDensity.current) { threshold.toPx() }
-    val fraction = remember(state, thresholdPx) {
-        derivedStateOf {
-            if (state.firstVisibleItemIndex > 0) 1f
-            else (state.firstVisibleItemScrollOffset / thresholdPx).coerceIn(0f, 1f)
-        }
-    }
-    return fraction.value
-}
-
-
-/** 固定大标题栏：26sp 左对齐，返回键在左侧底部；有副标题时自动加高。 */
-@Composable
-fun PageHeader(
+fun NxbPageScaffold(
     title: String,
-    subtitle: String? = null,
+    scrollBehavior: ScrollBehavior,
+    largeTitle: String = title,
+    subtitle: String = "",
+    fallbackBarHeight: Dp = 186.dp,
     navigationIcon: (@Composable () -> Unit)? = null,
     actions: (@Composable RowScope.() -> Unit)? = null,
+    content: @Composable (Dp) -> Unit,
 ) {
-    val barHeight = if (subtitle.isNullOrBlank()) 48.dp else 72.dp
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(MiuixTheme.colorScheme.background)
-            .statusBarsPadding()
-            .height(barHeight)
-            .padding(start = if (navigationIcon != null) 4.dp else 20.dp, end = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (navigationIcon != null) {
-            Box(Modifier.width(44.dp), contentAlignment = Alignment.Center) { navigationIcon() }
-        }
-        Column(Modifier.weight(1f)) {
-            AppText(
-                title,
-                fontSize = 26.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
-            if (!subtitle.isNullOrBlank()) {
-                AppText(
-                    subtitle,
-                    fontSize = 12.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    maxLines = 1,
-                )
-            }
-        }
-        if (actions != null) {
-            actions()
-        }
-    }
-}
+    // 顶栏自己的采样源：只录内容层（不含顶栏自身，否则玻璃会把自己录进去成鬼影）
+    val backdrop = rememberPageBlurBackdrop()
+    var barHeightPx by remember { mutableIntStateOf(0) }
+    val measured = with(LocalDensity.current) { barHeightPx.toDp() }
+    val barHeight = if (barHeightPx > 0) measured else fallbackBarHeight
 
-/** 折叠顶栏：50dp 展开 / 52dp 折叠，大标题淡出上移，背景走 haze 毛玻璃。 */
-@Composable
-fun NxbTopBar(
-    title: String,
-    subtitle: String? = null,
-    navigationIcon: (@Composable () -> Unit)? = null,
-    actions: (@Composable RowScope.() -> Unit)? = null,
-    collapse: Float,
-    hazeState: HazeState,
-) {
-    val expanded = if (subtitle.isNullOrBlank()) 50.dp else 68.dp
-    val collapsed = 52.dp
-    val contentHeight = expanded + (collapsed - expanded) * collapse
-    val bg = MiuixTheme.colorScheme.background
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(contentHeight)
-            .background(bg.copy(alpha = 0.86f))
-            .hazeEffect(state = hazeState) {
-                blurRadius = 24.dp
-                backgroundColor = bg.copy(alpha = 0.45f)
-                tints = listOf(HazeTint(bg.copy(alpha = 0.45f)))
-                noiseFactor = 0.02f
-                progressive = HazeProgressive.verticalGradient(
-                    startIntensity = 1f,
-                    endIntensity = 0f,
-                )
-            },
-    ) {
-        Column(
-            Modifier
-                .padding(top = 8.dp)
-                .padding(start = if (navigationIcon != null) 56.dp else 20.dp, end = 20.dp)
-                .graphicsLayer {
-                    alpha = 1f - collapse
-                    translationY = -16.dp.toPx() * collapse
-                },
-        ) {
-            AppText(title, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            if (!subtitle.isNullOrBlank()) {
-                AppText(
-                    subtitle,
-                    fontSize = 12.sp,
-                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    maxLines = 1,
-                )
-            }
-        }
-        Row(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .height(collapsed)
-                .padding(start = if (navigationIcon != null) 4.dp else 20.dp, end = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (navigationIcon != null) {
-                Box(Modifier.width(44.dp), contentAlignment = Alignment.Center) { navigationIcon() }
-            }
-            AppText(
-                title,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
+    Scaffold(
+        containerColor = MiuixTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0),
+    ) { _ ->
+        Box(Modifier.fillMaxSize()) {
+            // 内容全屏：滚动时从顶栏底下穿过，玻璃才有东西可采样
+            Box(
                 modifier = Modifier
-                    .weight(1f)
-                    .alpha(collapse),
+                    .fillMaxSize()
+                    .then(if (backdrop != null) Modifier.layerBackdrop(backdrop) else Modifier),
+            ) {
+                content(barHeight)
+            }
+            GlassTopAppBar(
+                title = title,
+                largeTitle = largeTitle,
+                subtitle = subtitle,
+                backdrop = backdrop,
+                progressiveBlur = true,
+                scrollBehavior = scrollBehavior,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth(),
+                // 测**前景**高度（不含背景带向外延伸的 bandOverhang），内容留白靠它
+                contentModifier = Modifier.onSizeChanged { barHeightPx = it.height },
+                navigationIcon = { navigationIcon?.invoke() },
+                actions = { actions?.invoke(this) },
             )
-            if (actions != null) actions()
         }
+    }
+}
+
+/**
+ * 页面级模糊采样层：只录不透明底色 + 内容。
+ *
+ * `drawRect(surface)` 先铺不透明底：录制内容若有透明区域，模糊会把颜色扩散到透明像素、
+ * 出现色块（官方指南要求）。运行时不支持着色器时返回 null，玻璃顶栏自动退回不透明底色。
+ */
+@Composable
+private fun rememberPageBlurBackdrop(): LayerBackdrop? {
+    if (!isRuntimeShaderSupported()) return null
+    val surface = MiuixTheme.colorScheme.surface
+    return rememberLayerBackdrop {
+        drawRect(surface)
+        drawContent()
     }
 }

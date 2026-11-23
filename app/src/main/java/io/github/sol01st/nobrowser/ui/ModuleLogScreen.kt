@@ -1,10 +1,6 @@
 package io.github.sol01st.nobrowser.ui
 
 import android.content.ClipData
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.runtime.derivedStateOf
-import dev.chrisbanes.haze.hazeSource
-import dev.chrisbanes.haze.rememberHazeState
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.activity.compose.BackHandler
@@ -15,7 +11,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -53,10 +50,9 @@ import top.yukonga.miuix.kmp.basic.DropdownEntry
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Switch
-import top.yukonga.miuix.kmp.menu.WindowIconCascadingDropdownMenu
+import top.yukonga.miuix.kmp.window.WindowCascadingListPopup
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -168,30 +164,39 @@ fun ModuleLogScreen(onBack: () -> Unit) {
     }
 
     val listState = rememberLazyListState()
+    var menuShow by remember { mutableStateOf(false) }
 
-        val topHaze = rememberHazeState()
-    val density = LocalDensity.current
-    val collapse by remember(listState, density) {
-        derivedStateOf {
-            if (listState.firstVisibleItemIndex > 0) 1f
-            else (listState.firstVisibleItemScrollOffset / with(density) { 50.dp.toPx() }).coerceIn(0f, 1f)
-        }
-    }
-
-Scaffold(
-        containerColor = MiuixTheme.colorScheme.background,
-        contentWindowInsets = WindowInsets(0),
-    ) { padding ->
+    // 和首页一致：大标题上滑折叠成中间小标题
+    val scrollBehavior = MiuixScrollBehavior()
+    NxbPageScaffold(
+        title = "模块日志",
+        largeTitle = "模块日志",
+        subtitle = if (loaded) "共 ${entries.size} 条 · 拦截 ${entries.count { it.intercepted }} 条" else "",
+        scrollBehavior = scrollBehavior,
+        navigationIcon = {
+            IconButton(onClick = onBack) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+            }
+        },
+        actions = {
+            IconButton(onClick = { refresh() }) {
+                Icon(Icons.Default.Refresh, contentDescription = "刷新")
+            }
+            IconButton(onClick = { menuShow = true }) {
+                Icon(Icons.Default.MoreVert, contentDescription = "更多")
+            }
+        },
+    ) { barHeight ->
         Box(Modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .hazeSource(topHaze),
+                .nestedScroll(scrollBehavior.nestedScrollConnection),
             contentPadding = PaddingValues(
                 start = 0.dp,
                 end = 0.dp,
-                top = 68.dp + 4.dp,
+                top = barHeight + 10.dp,
                 bottom = listBottomPadding(),
             ),
             verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -336,51 +341,38 @@ Scaffold(
                 }
             }
         }
-            NxbTopBar(
-                collapse = collapse,
-                hazeState = topHaze,
-                title = "模块日志",
-                subtitle = if (loaded) "共 ${entries.size} 条 · 拦截 ${entries.count { it.intercepted }} 条" else null,
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { refresh() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "刷新")
-                    }
-                    WindowIconCascadingDropdownMenu(
-                        entry = DropdownEntry(
-                            items = listOf(
-                                DropdownItem(
-                                    text = "只看拦截",
-                                    summary = if (interceptedOnly) "已开启" else "已关闭",
-                                    selected = interceptedOnly,
-                                    onClick = { interceptedOnly = !interceptedOnly },
-                                ),
-                                DropdownItem(
-                                    text = "复制到剪贴板",
-                                    summary = "当前 ${shown.size} 条",
-                                    onClick = { copyAll() },
-                                ),
-                                DropdownItem(
-                                    text = "导出为 txt",
-                                    summary = "当前 ${shown.size} 条",
-                                    onClick = {
-                                        if (shown.isEmpty()) {
-                                            HintState.show("没有可导出的内容")
-                                        } else {
-                                            exportLauncher.launch(ModuleLog.defaultFileName())
-                                        }
-                                    },
-                                ),
+            // 0.9.4 没有 menu 包的 WindowIconCascadingDropdownMenu，等价功能是 window 包的级联弹窗 + 自管 show
+            WindowCascadingListPopup(
+                show = menuShow,
+                entries = listOf(
+                    DropdownEntry(
+                        items = listOf(
+                            DropdownItem(
+                                text = "只看拦截",
+                                summary = if (interceptedOnly) "已开启" else "已关闭",
+                                selected = interceptedOnly,
+                                onClick = { interceptedOnly = !interceptedOnly },
+                            ),
+                            DropdownItem(
+                                text = "复制到剪贴板",
+                                summary = "当前 ${shown.size} 条",
+                                onClick = { copyAll() },
+                            ),
+                            DropdownItem(
+                                text = "导出为 txt",
+                                summary = "当前 ${shown.size} 条",
+                                onClick = {
+                                    if (shown.isEmpty()) {
+                                        HintState.show("没有可导出的内容")
+                                    } else {
+                                        exportLauncher.launch(ModuleLog.defaultFileName())
+                                    }
+                                },
                             ),
                         ),
-                    ) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "更多")
-                    }
-                },
+                    ),
+                ),
+                onDismissRequest = { menuShow = false },
             )
         }
     }

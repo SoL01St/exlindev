@@ -72,7 +72,12 @@ fun NxbTheme(content: @Composable () -> Unit) {
                 title1 = baseTextStyles.title1.copy(fontSize = 26.sp),
             ),
             colors = if (dark) {
-            darkColorScheme()
+            // 深色：页面底压到纯黑，与 surface 同色 —— 顶栏玻璃的 band 混的是 30% surface，
+            // 两者不一致时会在深灰底上显出一块更黑的长条（HyperExtreme 也是靠底色一致避开的）。
+            // 卡片仍是 surfaceContainer(#242424)，纯黑底上层次反而更清楚。
+            darkColorScheme().copy(
+                background = Color.Black,
+            )
         } else {
             // 参考图配色：页面浅灰底，卡片纯白，分组边界可见
             // 背景比 iOS 的 F2F2F7 再深一档：卡片水平留白只有 12dp、行间距 6dp，
