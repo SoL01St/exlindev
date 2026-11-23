@@ -47,6 +47,7 @@
 1. 从 [Releases](https://github.com/SoL01St/exlindev/releases) 下载 APK 安装
 2. 在 LSPosed 中启用本模块，勾选所需应用作用域，重启目标应用
 3. 在模块内打开所需应用的接管开关
+4. 胶囊位置拖动后，如需每个应用弹出胶囊保持位置统一，请授予自启动权限
 
 ## 致谢
 
