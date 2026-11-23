@@ -45,7 +45,7 @@
 ## 安装
 
 1. 从 [Releases](https://github.com/SoL01St/exlindev/releases) 下载 APK 安装
-2. 在 LSPosed 中启用本模块并勾选所需应用作用域；到模块的「添加应用」里打开该应用的开关（首次会要求允许“读取应用列表”），然后重启目标应用即可
+2. 在 LSPosed 中启用本模块，勾选所需应用作用域，重启目标应用
 
 ## 致谢
 
