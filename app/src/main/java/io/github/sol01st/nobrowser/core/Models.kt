@@ -184,6 +184,9 @@ object Constants {
 
     /** 选择框位置（可用区域内 0~1 的比例，形如 "0.5000,0.6200"），拖动后写回。 */
     const val PREFS_KEY_CHOOSER_POS = "chooser_pos"
+
+    /** 选择框位置的读写口：宿主进程写不回远程配置，只能通过这个 provider。 */
+    const val CHOOSER_POS_AUTHORITY = "io.github.sol01st.nobrowser.pos"
     const val SELF_PACKAGE = "io.github.sol01st.nobrowser"
     const val LSPD_DB = "/data/adb/lspd/config/modules_config.db"
 }

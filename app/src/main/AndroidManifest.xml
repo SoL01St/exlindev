@@ -70,6 +70,15 @@
         <meta-data
             android:name="xposedminversion"
             android:value="102" />
+
+        <!-- 选择框位置的跨进程读写口。宿主要把拖动后的位置写回来，只能走这里：
+             libxposed 的远程配置在目标进程里是只读的。只处理 get/set 两个方法，
+             写入值校验为两个 0~1 浮点，最坏情况只是弹窗位置不对。 -->
+        <provider
+            android:name=".data.ChooserPosProvider"
+            android:authorities="io.github.sol01st.nobrowser.pos"
+            android:enabled="true"
+            android:exported="true" />
     </application>
 
 </manifest>

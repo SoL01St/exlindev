@@ -468,18 +468,30 @@ internal object HookEngine {
     /** 图标显示尺寸。 */
     private const val CHOOSER_ICON_DP = 28
 
+    /** 选择框位置的读写口：宿主进程写不回远程配置（libxposed 在目标进程里只读），走模块的 provider。 */
+    private val chooserPosUri = Uri.parse("content://${Constants.CHOOSER_POS_AUTHORITY}/pos")
+
     /**
      * 读选择框位置（可用区域内 0~1 的比例）。
      *
-     * 刻意不做进程内缓存：位置是全局共享的，缓存会让已经在后台跑着的应用一直用旧值——
-     * 拖完只有当前应用立刻生效，其它应用得重启才跟上。RemotePreferences 本身就是内存读，
-     * 每次弹窗取一次字符串的开销可以忽略。
+     * 先问模块的 provider —— 宿主进程自己拖出来的位置只能存在那边；拿不到再退回远程配置
+     * （模块进程内自己写的时候是能读到的）；都不行用默认值。
+     *
+     * 刻意不做进程内缓存：位置是全局共享的，缓存会让后台已经跑着的应用一直用旧值。
      */
-    private fun loadChooserRatio(): Pair<Float, Float> {
+    private fun loadChooserRatio(context: Context): Pair<Float, Float> {
         val raw = runCatching {
-            (remotePrefs ?: moduleRef?.getRemotePreferences(Constants.PREFS_NAME))
-                ?.getString(Constants.PREFS_KEY_CHOOSER_POS, null)
+            val viaProvider = context.contentResolver
+                .call(chooserPosUri, "get", null, null)
+                ?.getString("pos")
+            if (!viaProvider.isNullOrEmpty()) {
+                viaProvider
+            } else {
+                (remotePrefs ?: moduleRef?.getRemotePreferences(Constants.PREFS_NAME))
+                    ?.getString(Constants.PREFS_KEY_CHOOSER_POS, null)
+            }
         }.getOrNull()
+
         val ratio = raw?.split(',')?.let { parts ->
             val rx = parts.getOrNull(0)?.trim()?.toFloatOrNull()
             val ry = parts.getOrNull(1)?.trim()?.toFloatOrNull()
@@ -488,13 +500,27 @@ internal object HookEngine {
         return ratio ?: DEFAULT_CHOOSER_RATIO
     }
 
-    private fun saveChooserRatio(rx: Float, ry: Float) {
-        runCatching {
-            moduleRef?.getRemotePreferences(Constants.PREFS_NAME)
-                ?.edit()
-                ?.putString(Constants.PREFS_KEY_CHOOSER_POS, "$rx,$ry")
-                ?.commit()
-        }.onFailure { Log.w(TAG, "save chooser position failed", it) }
+    private fun saveChooserRatio(context: Context, rx: Float, ry: Float) {
+        val pos = "$rx,$ry"
+        val saved = runCatching {
+            val out = context.contentResolver.call(
+                chooserPosUri,
+                "set",
+                null,
+                Bundle().apply { putString("pos", pos) },
+            )
+            out?.getBoolean("ok") == true
+        }.getOrDefault(false)
+
+        if (!saved) {
+            // provider 不可用（模块被冻结等）时退回远程配置，模块进程内自己调用仍能写进去
+            runCatching {
+                moduleRef?.getRemotePreferences(Constants.PREFS_NAME)
+                    ?.edit()
+                    ?.putString(Constants.PREFS_KEY_CHOOSER_POS, pos)
+                    ?.commit()
+            }.onFailure { Log.w(TAG, "save chooser position failed", it) }
+        }
     }
 
     /**
@@ -666,7 +692,7 @@ internal object HookEngine {
                 win.attributes = attrs
             }
 
-            val (ratioX, ratioY) = loadChooserRatio()
+            val (ratioX, ratioY) = loadChooserRatio(activity)
             applyPos((ratioX * maxX).toInt(), (ratioY * maxY).toInt())
 
             dialog.show()
@@ -695,7 +721,7 @@ internal object HookEngine {
                 applyPos(x, y)
                 val rx = if (maxX > 0) x.toFloat() / maxX else DEFAULT_CHOOSER_RATIO.first
                 val ry = if (maxY > 0) y.toFloat() / maxY else DEFAULT_CHOOSER_RATIO.second
-                saveChooserRatio(rx, ry)
+                saveChooserRatio(activity, rx, ry)
             }
         }.onFailure { Log.w(TAG, "chooser failed", it) }
     }
