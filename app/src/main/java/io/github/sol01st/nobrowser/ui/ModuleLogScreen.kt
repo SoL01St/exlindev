@@ -33,6 +33,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
+import top.yukonga.miuix.kmp.glass.GlassPopup
+import top.yukonga.miuix.kmp.glass.GlassPopupItem
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -49,10 +54,9 @@ import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.DropdownEntry
 import top.yukonga.miuix.kmp.basic.DropdownItem
 import top.yukonga.miuix.kmp.basic.Icon
-import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.glass.GlassIconButton
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Switch
-import top.yukonga.miuix.kmp.window.WindowCascadingListPopup
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
@@ -165,6 +169,9 @@ fun ModuleLogScreen(onBack: () -> Unit) {
 
     val listState = rememberLazyListState()
     var menuShow by remember { mutableStateOf(false) }
+    // 玻璃级联菜单的锚点：菜单从右上角「更多」长出来
+    // 玻璃弹层用窗口坐标定位：记住「更多」按钮的 bounds
+    var menuBounds by remember { mutableStateOf(Rect.Zero) }
 
     // 和首页一致：大标题上滑折叠成中间小标题
     val scrollBehavior = MiuixScrollBehavior()
@@ -174,16 +181,52 @@ fun ModuleLogScreen(onBack: () -> Unit) {
         subtitle = if (loaded) "共 ${entries.size} 条 · 拦截 ${entries.count { it.intercepted }} 条" else "",
         scrollBehavior = scrollBehavior,
         navigationIcon = {
-            IconButton(onClick = onBack) {
+            GlassIconButton(onClick = onBack) {
                 Icon(Icons.Default.ArrowBack, contentDescription = "返回")
             }
         },
         actions = {
-            IconButton(onClick = { refresh() }) {
+            GlassIconButton(onClick = { refresh() }) {
                 Icon(Icons.Default.Refresh, contentDescription = "刷新")
             }
-            IconButton(onClick = { menuShow = true }) {
+            GlassIconButton(
+                onClick = { menuShow = true },
+                modifier = Modifier.onGloballyPositioned { menuBounds = it.boundsInWindow() },
+            ) {
                 Icon(Icons.Default.MoreVert, contentDescription = "更多")
+            }
+        },
+        overlay = { bd ->
+            if (menuShow) {
+                GlassPopup(
+                    show = true,
+                    onDismissRequest = { menuShow = false },
+                    anchorBounds = menuBounds,
+                    backdrop = bd,
+                ) {
+                    GlassPopupItem(
+                        text = "只看拦截",
+                        summary = if (interceptedOnly) "已开启" else "已关闭",
+                        selected = interceptedOnly,
+                        onClick = { interceptedOnly = !interceptedOnly },
+                    )
+                    GlassPopupItem(
+                        text = "复制到剪贴板",
+                        summary = "当前 ${shown.size} 条",
+                        onClick = { copyAll() },
+                    )
+                    GlassPopupItem(
+                        text = "导出为 txt",
+                        summary = "当前 ${shown.size} 条",
+                        onClick = {
+                            if (shown.isEmpty()) {
+                                HintState.show("没有可导出的内容")
+                            } else {
+                                exportLauncher.launch(ModuleLog.defaultFileName())
+                            }
+                        },
+                    )
+                }
             }
         },
     ) { barHeight ->
@@ -341,39 +384,6 @@ fun ModuleLogScreen(onBack: () -> Unit) {
                 }
             }
         }
-            // 0.9.4 没有 menu 包的 WindowIconCascadingDropdownMenu，等价功能是 window 包的级联弹窗 + 自管 show
-            WindowCascadingListPopup(
-                show = menuShow,
-                entries = listOf(
-                    DropdownEntry(
-                        items = listOf(
-                            DropdownItem(
-                                text = "只看拦截",
-                                summary = if (interceptedOnly) "已开启" else "已关闭",
-                                selected = interceptedOnly,
-                                onClick = { interceptedOnly = !interceptedOnly },
-                            ),
-                            DropdownItem(
-                                text = "复制到剪贴板",
-                                summary = "当前 ${shown.size} 条",
-                                onClick = { copyAll() },
-                            ),
-                            DropdownItem(
-                                text = "导出为 txt",
-                                summary = "当前 ${shown.size} 条",
-                                onClick = {
-                                    if (shown.isEmpty()) {
-                                        HintState.show("没有可导出的内容")
-                                    } else {
-                                        exportLauncher.launch(ModuleLog.defaultFileName())
-                                    }
-                                },
-                            ),
-                        ),
-                    ),
-                ),
-                onDismissRequest = { menuShow = false },
-            )
         }
     }
 }

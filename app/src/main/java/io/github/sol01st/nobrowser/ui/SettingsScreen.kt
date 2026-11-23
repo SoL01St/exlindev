@@ -42,7 +42,7 @@ import java.util.Locale
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.SmallTitle
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+import top.yukonga.miuix.kmp.glass.GlassDropdownPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 private fun themeTitle(mode: ThemeMode): String = when (mode) {
@@ -130,10 +130,11 @@ fun SettingsScreen(
             item { SmallTitle("外观") }
             item {
                 GroupCard {
-                    OverlayDropdownPreference(
+                    GlassDropdownPreference(
                         title = "主题模式",
                         items = ThemeMode.entries.map { themeTitle(it) },
                         selectedIndex = ThemeMode.entries.indexOf(ThemeState.mode),
+                        backdrop = LocalGlassBackdrop.current,
                         onSelectedIndexChange = { index ->
                             val mode = ThemeMode.entries[index]
                             ThemeState.mode = mode

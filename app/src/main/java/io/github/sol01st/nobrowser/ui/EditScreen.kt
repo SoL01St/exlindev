@@ -32,6 +32,7 @@ import io.github.sol01st.nobrowser.data.RuleStore
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.glass.GlassIconButton
 import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -91,7 +92,7 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
         largeTitle = app.appName,
         scrollBehavior = scrollBehavior,
         navigationIcon = {
-            IconButton(onClick = onBack) {
+            GlassIconButton(onClick = onBack) {
                 Icon(Icons.Default.ArrowBack, contentDescription = "返回")
             }
         },

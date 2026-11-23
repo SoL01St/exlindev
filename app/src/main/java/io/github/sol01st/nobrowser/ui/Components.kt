@@ -11,6 +11,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -51,14 +52,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import io.github.sol01st.nobrowser.core.LinkRule
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.RadioButton
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.window.WindowDialog
 
 import android.util.LruCache
 import androidx.compose.runtime.LaunchedEffect
@@ -72,6 +70,20 @@ import top.yukonga.miuix.kmp.glass.GlassTopAppBar
 import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.blur.layerBackdrop
 import top.yukonga.miuix.kmp.blur.LayerBackdrop
+import top.yukonga.miuix.kmp.blur.Backdrop
+import androidx.compose.runtime.staticCompositionLocalOf
+import top.yukonga.miuix.kmp.theme.LocalContentColor
+import top.yukonga.miuix.kmp.glass.GlassDialog
+import top.yukonga.miuix.kmp.glass.GlassDialogButton
+import top.yukonga.miuix.kmp.glass.GlassDialogButtonRole
+
+/**
+ * 页面玻璃采样源：玻璃对话框 / 玻璃弹层用它采样背后那层内容。
+ *
+ * 由 AppRoot 提供（录制整页、不含浮层自身）；不在录制层里时为 null，
+ * glass 组件会自动退回不透明材质，避免"把自己录进去"的自采样。
+ */
+val LocalGlassBackdrop = staticCompositionLocalOf<Backdrop?> { null }
 
 /** 统一文本组件，显式行高避免大字号下被裁切。 */
 @Composable
@@ -248,15 +260,16 @@ fun AppIcon(pkg: String, size: Dp = 44.dp) {
     }
 }
 
-/** 统一的对话框容器：交给 Miuix WindowDialog，遮罩、动画、返回手势都由组件处理。 */
+/** 统一的对话框容器：交给 Miuix GlassDialog，玻璃材质、遮罩、动画、返回手势都由组件处理。 */
 @Composable
 fun AppDialog(
     onDismiss: () -> Unit,
     content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
 ) {
-    WindowDialog(
-        show = true,
+    GlassDialog(
         onDismissRequest = onDismiss,
+        show = true,
+        backdrop = LocalGlassBackdrop.current,
     ) {
         Column(content = content)
     }
@@ -265,19 +278,17 @@ fun AppDialog(
 @Composable
 fun DialogAction(text: String, primary: Boolean = false, onClick: () -> Unit) {
     val tap = rememberTapHaptics()
-    TextButton(
-        text = text,
+    GlassDialogButton(
         onClick = {
             tap()
             onClick()
         },
-        minWidth = 64.dp,
-        colors = if (primary) {
-            ButtonDefaults.textButtonColorsPrimary()
-        } else {
-            ButtonDefaults.textButtonColors()
-        },
-    )
+        role = if (primary) GlassDialogButtonRole.Primary else GlassDialogButtonRole.Normal,
+        minWidth = 60.dp,
+        insideMargin = PaddingValues(horizontal = 20.dp),
+    ) {
+        AppText(text, fontSize = 15.sp, color = LocalContentColor.current)
+    }
 }
 
 @Composable
@@ -414,10 +425,7 @@ fun CompactConfirmDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    WindowDialog(
-        show = true,
-        onDismissRequest = onDismiss,
-    ) {
+    AppDialog(onDismiss) {
         Column(Modifier.fillMaxWidth()) {
             AppText(message, fontSize = 15.sp, maxLines = 2)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -482,6 +490,8 @@ fun NxbPageScaffold(
     fallbackBarHeight: Dp = 186.dp,
     navigationIcon: (@Composable () -> Unit)? = null,
     actions: (@Composable RowScope.() -> Unit)? = null,
+    /** 玻璃弹层槽位：画在采样层**外面**，否则弹层会把自己录进背景（自采样发白）。参数是页面采样源。 */
+    overlay: (@Composable BoxScope.(Backdrop?) -> Unit)? = null,
     content: @Composable (Dp) -> Unit,
 ) {
     // 顶栏自己的采样源：只录内容层（不含顶栏自身，否则玻璃会把自己录进去成鬼影）
@@ -518,6 +528,8 @@ fun NxbPageScaffold(
                 navigationIcon = { navigationIcon?.invoke() },
                 actions = { actions?.invoke(this) },
             )
+            // 弹层在 layerBackdrop 之外：采样的是页面内容，不是它自己
+            overlay?.invoke(this, backdrop)
         }
     }
 }

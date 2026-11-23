@@ -25,6 +25,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
+import top.yukonga.miuix.kmp.glass.GlassPopup
+import top.yukonga.miuix.kmp.glass.GlassPopupItem
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
@@ -34,11 +39,8 @@ import io.github.sol01st.nobrowser.data.InstalledApps
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.PullToRefresh
 import top.yukonga.miuix.kmp.basic.SmallTitle
-import top.yukonga.miuix.kmp.basic.ListPopupColumn
-import top.yukonga.miuix.kmp.basic.PopupPositionProvider
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.window.WindowListPopup
 
 /** PullToRefresh 默认文案是英文，这里给出简体中文四态。 */
 private val RefreshTexts = listOf("下拉刷新", "松开刷新", "正在刷新…", "刷新完成")
@@ -72,6 +74,8 @@ fun AppsScreen(
 
     // 长按菜单：锚定到被长按的那一行
     var menuPkg by remember { mutableStateOf<String?>(null) }
+    // 长按菜单锚点：弹层从这一行长出来，用窗口坐标
+    var menuBounds by remember { mutableStateOf(Rect.Zero) }
     // 官方折叠：MiuixScrollBehavior 驱动「大标题 → 上滑折叠成小标题」
     val scrollBehavior = MiuixScrollBehavior()
     NxbPageScaffold(
@@ -80,6 +84,25 @@ fun AppsScreen(
         subtitle = if (installedLoaded) "已接管 $enabledCount 个应用" else "正在读取应用列表…",
         fallbackBarHeight = 196.dp,
         scrollBehavior = scrollBehavior,
+        overlay = { bd ->
+            val pkg = menuPkg
+            if (pkg != null) {
+                GlassPopup(
+                    show = true,
+                    onDismissRequest = { menuPkg = null },
+                    anchorBounds = menuBounds,
+                    backdrop = bd,
+                ) {
+                    GlassPopupItem(
+                        text = "从首页移除",
+                        onClick = {
+                            menuPkg = null
+                            onRemoveApp(pkg)
+                        },
+                    )
+                }
+            }
+        },
     ) { barHeight ->
         PullToRefresh(
                 isRefreshing = refreshing,
@@ -117,7 +140,12 @@ fun AppsScreen(
                         val isInstalled = inst != null
                         // 只有「用户手动添加」且「不在内置默认清单里」的应用才允许删除
                         val removable = app.addedByUser && app.packageName !in defaultPkgs
-                        Box(Modifier.animateItem()) {
+                        val rowBounds = remember { mutableStateOf(Rect.Zero) }
+                        Box(
+                            Modifier
+                                .animateItem()
+                                .onGloballyPositioned { rowBounds.value = it.boundsInWindow() },
+                        ) {
                             NxbCard(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -126,6 +154,7 @@ fun AppsScreen(
                                 onClick = { if (isInstalled) onOpen(app.packageName) },
                                 onLongClick = {
                                     if (removable) {
+                                        menuBounds = rowBounds.value
                                         menuPkg = app.packageName
                                     } else {
                                         onBuiltInLongPress()
@@ -144,23 +173,6 @@ fun AppsScreen(
                                         )
                                     },
                                 )
-                            }
-
-                            // 窗口级列表弹层：锚定在这一行下方，位置由组件按父布局计算
-                            WindowListPopup(
-                                show = menuPkg == app.packageName,
-                                alignment = PopupPositionProvider.Align.Start,
-                                onDismissRequest = { menuPkg = null },
-                            ) {
-                                ListPopupColumn {
-                                    BasicComponent(
-                                        title = "从首页移除",
-                                        onClick = {
-                                            menuPkg = null
-                                            onRemoveApp(app.packageName)
-                                        },
-                                    )
-                                }
                             }
                         }
                     }

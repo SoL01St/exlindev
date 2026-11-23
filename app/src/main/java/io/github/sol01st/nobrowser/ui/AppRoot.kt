@@ -40,6 +40,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
@@ -304,6 +305,8 @@ fun AppRoot() {
         null
     }
 
+    // 玻璃对话框 / 玻璃弹层从这里取采样源：录的是整页内容（不含浮层自身）
+    CompositionLocalProvider(LocalGlassBackdrop provides barBackdrop) {
     Box(Modifier.fillMaxSize()) {
     // 底栏是浮层，不占布局高度：一二级页可用高度完全一致，
     // 进出二级页时列表锚点不会被视口高度变化顶动。
@@ -440,6 +443,40 @@ fun AppRoot() {
             }
             }
 
+            // 首页底栏：0.9.4 的 FloatingNavigationBar，浮层压在内容上，不影响任何页面的可用高度
+            if (route is Route.Root) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .zIndex(1f)
+                        .fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    BottomBar(
+                        current = tab,
+                        backdrop = barBackdrop,
+                        onSelect = { tab = it },
+                    )
+                }
+                // 加号：只出现在首页（模块列表页）右下角，浮在底栏之上
+                if (tab == Tab.Apps) {
+                    // 定位交给外层 Box：FAB 自己只拿一个干净的 Modifier（内部会 .size()）
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 20.dp)
+                            .padding(bottom = bottomBarReservedHeight() + 12.dp),
+                    ) {
+                        AddAppFab(
+                            onClick = {
+                                tap()
+                                route = Route.Add
+                            },
+                        )
+                    }
+                }
+            }
+
             // 提示条：队列 / 时长 / 滑动消失交给官方 SnackbarHost
             SnackbarHost(
                 state = HintState.host,
@@ -452,39 +489,8 @@ fun AppRoot() {
         }
     }
 
-        // 首页底栏：0.9.4 的 FloatingNavigationBar，浮层压在内容上，不影响任何页面的可用高度
-        if (route is Route.Root) {
-            Box(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .zIndex(1f)
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.Center,
-            ) {
-                BottomBar(
-                    current = tab,
-                    backdrop = barBackdrop,
-                    onSelect = { tab = it },
-                )
-            }
-            // 加号：只出现在首页（模块列表页）右下角，浮在底栏之上
-            if (tab == Tab.Apps) {
-                // 定位交给外层 Box：FAB 自己只拿一个干净的 Modifier（内部会 .size()）
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 20.dp)
-                        .padding(bottom = bottomBarReservedHeight() + 12.dp),
-                ) {
-                    AddAppFab(
-                        onClick = {
-                            tap()
-                            route = Route.Add
-                        },
-                    )
-                }
-            }
-        }
+
+    }
     }
 }
 
