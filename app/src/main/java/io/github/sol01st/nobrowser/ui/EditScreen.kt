@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -19,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +56,9 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
     var showResetConfirm by remember { mutableStateOf(false) }
     // 被关掉的白名单条目（字符串列表保持不变，单独存一份禁用集合）
     var whiteDisabled by remember(app.packageName) { mutableStateOf(app.disabledWhiteUrls.toSet()) }
+    // 规则多的时候整段可以收起，折叠状态跟着页面一起保存
+    var rulesExpanded by rememberSaveable(app.packageName) { mutableStateOf(true) }
+    var whiteExpanded by rememberSaveable(app.packageName) { mutableStateOf(true) }
     val context = LocalContext.current
     val store = remember { RuleStore(context) }
 
@@ -111,12 +114,11 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
             ),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            item { SmallTitle("总开关") }
+            item { SectionHeader("总开关", topPadding = 2.dp) }
             item {
                 GroupCard {
                     BasicComponent(
                         title = "接管此应用",
-                        summary = "首次接管的应用需在 LSPosed 作用域里重新勾选一次",
                         endActions = {
                             Switch(
                                 checked = enabled,
@@ -144,115 +146,139 @@ fun EditScreen(app: TargetApp, onBack: () -> Unit, onSave: (TargetApp) -> Unit) 
                 }
             }
 
-            item { SmallTitle("拦截规则（${rules.size}）") }
-            if (rules.isEmpty()) {
-                item {
-                    AppText(
-                        "还没有规则。点下面的「添加规则」，填入该应用的网页 Activity 即可。",
-                        fontSize = 13.sp,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 4.dp),
-                    )
-                }
+            // ===== 拦截规则 =====
+            item {
+                SectionHeader(
+                    title = "拦截规则（${rules.size}）",
+                    expanded = rulesExpanded,
+                    onToggle = { rulesExpanded = !rulesExpanded },
+                )
             }
-            itemsIndexed(rules, key = { index, rule -> "r" + index + "|" + rule.activityName + "|" + rule.extrasKey }) { _, rule ->
-                NxbCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp)
-                        // 关掉的规则整行变淡，一眼能看出哪条没生效
-                        .alpha(if (rule.enabled) 1f else 0.45f)
-                        .animateItem(),
-                    cornerRadius = 18.dp,
-                ) {
-                    BasicComponent(
-                        title = rule.activityName,
-                        summary = (if (rule.isCaller()) "入口 · " else "目标 · ") + "取值方式：" + describeKey(rule.extrasKey),
-                        endActions = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Switch(
-                                    checked = rule.enabled,
-                                    onCheckedChange = { on ->
-                                        commit(
-                                            rulesNew = rules.map {
-                                                if (it === rule) it.copy(enabled = on) else it
+            if (rulesExpanded) {
+                item {
+                    GroupCard {
+                        if (rules.isEmpty()) {
+                            AppText(
+                                "还没有规则。点下面的「添加规则」，填入该应用的网页 Activity 即可。",
+                                fontSize = 13.sp,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                modifier = Modifier.padding(
+                                    start = 16.dp,
+                                    end = 16.dp,
+                                    top = 10.dp,
+                                    bottom = 10.dp,
+                                ),
+                            )
+                            GroupDivider()
+                        }
+                        rules.forEachIndexed { index, rule ->
+                            if (index > 0) GroupDivider()
+                            BasicComponent(
+                                modifier = Modifier.alpha(if (rule.enabled) 1f else 0.45f),
+                                title = rule.activityName,
+                                summary = (if (rule.isCaller()) "入口 · " else "目标 · ") +
+                                    "取值方式：" + describeKey(rule.extrasKey),
+                                endActions = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Switch(
+                                            checked = rule.enabled,
+                                            onCheckedChange = { on ->
+                                                commit(
+                                                    rulesNew = rules.map {
+                                                        if (it === rule) it.copy(enabled = on) else it
+                                                    },
+                                                )
                                             },
                                         )
-                                    },
-                                )
-                                IconButton(onClick = { pendingDeleteRule = rule }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "删除")
-                                }
-                            }
-                        },
-                        onClick = { editingRule = rule },
-                    )
-                }
-            }
-            item {
-                GroupCard {
-                    BasicComponent(
-                        title = "添加规则",
-                        summary = "Activity 支持 * 通配，例如 *Browser*",
-                        onClick = { showRuleDialog = true },
-                    )
+                                        IconButton(onClick = { pendingDeleteRule = rule }) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "删除",
+                                            )
+                                        }
+                                    }
+                                },
+                                onClick = { editingRule = rule },
+                            )
+                        }
+                        GroupDivider()
+                        BasicComponent(
+                            title = "添加规则",
+                            summary = "Activity 支持 * 通配，例如 *Browser*",
+                            onClick = { showRuleDialog = true },
+                        )
+                    }
                 }
             }
 
-            item { SmallTitle("白名单（${white.size}）") }
-            if (white.isEmpty()) {
+            // ===== 白名单 =====
+            item {
+                SectionHeader(
+                    title = "白名单（${white.size}）",
+                    expanded = whiteExpanded,
+                    onToggle = { whiteExpanded = !whiteExpanded },
+                )
+            }
+            if (whiteExpanded) {
                 item {
-                    AppText(
-                        "还没有白名单。白名单里的域名会保持在应用内打开；写成 =mail.qq.com 表示只精确匹配这个域名（不含子域）。",
-                        fontSize = 13.sp,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 4.dp),
-                    )
-                }
-            }
-            itemsIndexed(white, key = { index, host -> "w" + index + "|" + host }) { _, host ->
-                val whiteOn = host !in whiteDisabled
-                NxbCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp)
-                        .alpha(if (whiteOn) 1f else 0.45f)
-                        .animateItem(),
-                    cornerRadius = 18.dp,
-                ) {
-                    BasicComponent(
-                        title = host,
-                        endActions = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Switch(
-                                    checked = whiteOn,
-                                    onCheckedChange = { on ->
-                                        commit(
-                                            whiteDisabledNew = if (on) whiteDisabled - host else whiteDisabled + host,
+                    GroupCard {
+                        if (white.isEmpty()) {
+                            AppText(
+                                "还没有白名单。白名单里的域名会保持在应用内打开；写成 =mail.qq.com 表示只精确匹配这个域名（不含子域）。",
+                                fontSize = 13.sp,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                modifier = Modifier.padding(
+                                    start = 16.dp,
+                                    end = 16.dp,
+                                    top = 10.dp,
+                                    bottom = 10.dp,
+                                ),
+                            )
+                            GroupDivider()
+                        }
+                        white.forEachIndexed { index, host ->
+                            if (index > 0) GroupDivider()
+                            val whiteOn = host !in whiteDisabled
+                            BasicComponent(
+                                modifier = Modifier.alpha(if (whiteOn) 1f else 0.45f),
+                                title = host,
+                                endActions = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Switch(
+                                            checked = whiteOn,
+                                            onCheckedChange = { on ->
+                                                commit(
+                                                    whiteDisabledNew = if (on) {
+                                                        whiteDisabled - host
+                                                    } else {
+                                                        whiteDisabled + host
+                                                    },
+                                                )
+                                            },
                                         )
-                                    },
-                                )
-                                IconButton(onClick = { pendingDeleteHost = host }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "删除")
-                                }
-                            }
-                        },
-                        onClick = { editingHost = host },
-                    )
-                }
-            }
-            item {
-                GroupCard {
-                    BasicComponent(
-                        title = "添加白名单域名",
-                        summary = "命中白名单的链接保持应用内打开",
-                        onClick = { showWhiteDialog = true },
-                    )
+                                        IconButton(onClick = { pendingDeleteHost = host }) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "删除",
+                                            )
+                                        }
+                                    }
+                                },
+                                onClick = { editingHost = host },
+                            )
+                        }
+                        GroupDivider()
+                        BasicComponent(
+                            title = "添加白名单域名",
+                            summary = "命中白名单的链接保持应用内打开",
+                            onClick = { showWhiteDialog = true },
+                        )
+                    }
                 }
             }
 
             item {
-                GroupCard {
+                GroupCard(modifier = Modifier.padding(top = 10.dp)) {
                     BasicComponent(
                         title = "按模板重置规则",
                         summary = "恢复此应用的默认规则与白名单，保留开关设置",

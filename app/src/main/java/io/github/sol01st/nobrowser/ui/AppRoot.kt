@@ -39,6 +39,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
@@ -56,6 +57,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.yukonga.miuix.kmp.basic.Icon
+
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.SnackbarHost
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -71,6 +73,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.clickable
 
 enum class Tab { Apps, Settings }
+
+/** SaveableStateProvider 的 key：每个路由一个稳定字符串，返回时才能恢复页面状态。 */
+private fun Route.saveKey(): String = when (this) {
+    Route.Root -> "root"
+    Route.Add -> "add"
+    Route.About -> "about"
+    Route.Logs -> "logs"
+    Route.Backup -> "backup"
+    is Route.Edit -> "edit:" + pkg
+}
 
 sealed interface Route {
     data object Root : Route
@@ -102,6 +114,9 @@ fun AppRoot() {
     // 提到这一层：进出二级页后返回时保留滚动位置
     val appsListState = rememberLazyListState()
     val settingsListState = rememberLazyListState()
+    // 路由切换时把每个页面的可保存状态（顶栏折叠量、列表位置、滚动位置…）存起来，
+    // 返回时原样恢复。AnimatedContent 默认会直接销毁旧页面，rememberSaveable 也就没了。
+    val routeStates = rememberSaveableStateHolder()
 
     // 切换 Tab 时回到顶部（保留"进出二级页返回原位"的行为，但不让 Tab 之间共享滚动位置）
     LaunchedEffect(tab) {
@@ -353,12 +368,16 @@ fun AppRoot() {
                 },
                 label = "route",
             ) { current ->
+                // 页面内容抽成一个 composable lambda：根页套 SaveableStateProvider 保留状态，
+                // 二级页直接调用，每次进入都是全新一页（见下面的 if 分支）。
+                val page: @Composable () -> Unit = {
                 when (current) {
                     is Route.Root -> Crossfade(
                         targetState = tab,
                         animationSpec = tween(220, easing = LinearOutSlowInEasing),
                         label = "tab",
                     ) { currentTab ->
+                        routeStates.SaveableStateProvider("tab:" + currentTab.name) {
                         if (currentTab == Tab.Apps) {
                             AppsScreen(
                                 apps = apps,
@@ -391,6 +410,7 @@ fun AppRoot() {
                                 onOpenLogs = { route = Route.Logs },
                                 onOpenBackup = { route = Route.Backup },
                             )
+                        }
                         }
                     }
 
@@ -448,6 +468,16 @@ fun AppRoot() {
                         },
                     )
 
+                }
+                }
+
+                // 只有根页（首页 / 设置）保存状态：从二级页返回时列表位置、折叠标题都不丢。
+                // 二级页（添加 / 编辑 / 关于 / 日志 / 备份）不经过 SaveableStateProvider，
+                // 退出再进入就是全新一页，不会停在上次的滚动位置。
+                if (current is Route.Root) {
+                    routeStates.SaveableStateProvider(current.saveKey()) { page() }
+                } else {
+                    page()
                 }
             }
             }

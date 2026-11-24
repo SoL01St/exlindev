@@ -55,8 +55,17 @@ import io.github.sol01st.nobrowser.core.LinkRule
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.RadioButton
 import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.basic.TextFieldDefaults
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.basic.ArrowRight
 
 import android.util.LruCache
 import androidx.compose.runtime.LaunchedEffect
@@ -219,6 +228,55 @@ fun GroupCard(
     )
 }
 
+/** 官方 chevron：能进入下一级页面的行，末尾统一挂这个（尺寸/颜色照 Miuix GlassPopup）。 */
+@Composable
+fun NxbArrow() {
+    Icon(
+        imageVector = MiuixIcons.Basic.ArrowRight,
+        contentDescription = null,
+        modifier = Modifier
+            .padding(start = 8.dp)
+            .size(16.dp),
+        tint = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+    )
+}
+
+/**
+ * 分组标题：字体、颜色、内边距都与 [SmallTitle] 一致，只在右侧多一个折叠按钮。
+ *
+ * [onToggle] 为 null 时退化成普通 SmallTitle（不给按钮留位置）。
+ * [topPadding] 用来拉开与上一组卡片的距离，组内标题传 0.dp。
+ */
+@Composable
+fun SectionHeader(
+    title: String,
+    expanded: Boolean = true,
+    onToggle: (() -> Unit)? = null,
+    topPadding: Dp = 12.dp,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(end = 12.dp, top = topPadding),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SmallTitle(title, modifier = Modifier.weight(1f))
+        if (onToggle != null) {
+            IconButton(onClick = onToggle) {
+                Icon(
+                    imageVector = if (expanded) {
+                        Icons.Filled.KeyboardArrowUp
+                    } else {
+                        Icons.Filled.KeyboardArrowDown
+                    },
+                    contentDescription = if (expanded) "折叠" else "展开",
+                    tint = MiuixTheme.colorScheme.onBackgroundVariant,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun GroupDivider(startIndent: Dp = 16.dp) {
     HorizontalDivider(
@@ -293,13 +351,30 @@ fun DialogAction(text: String, primary: Boolean = false, onClick: () -> Unit) {
 
 @Composable
 private fun FieldBox(value: String, placeholder: String, onValueChange: (String) -> Unit) {
+    // 弹窗面是一层浅色玻璃，TextField 默认的 secondaryContainer(#F0F0F0) 贴上去几乎同色，
+    // 而且只有聚焦才出边；这里按主题叠一层反差色 + 一圈 0.5dp 细边，未聚焦也看得出是个输入框。
+    val fill = if (LocalDarkTheme.current) {
+        Color.White.copy(alpha = 0.07f)
+    } else {
+        Color.Black.copy(alpha = 0.05f)
+    }
     TextField(
         value = value,
         onValueChange = onValueChange,
         label = placeholder,
         useLabelAsPlaceholder = true,
         singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
+        colors = TextFieldDefaults.textFieldColors(
+            backgroundColor = fill,
+            labelColor = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(
+                width = 0.5.dp,
+                color = MiuixTheme.colorScheme.outline,
+                shape = RoundedCornerShape(TextFieldDefaults.CornerRadius),
+            ),
     )
 }
 
@@ -346,18 +421,12 @@ fun RuleEditDialog(
             color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
         )
         Spacer(Modifier.height(6.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            ScopeChoice(
-                text = "入口",
-                selected = scope == LinkRule.SCOPE_CALLER,
-                modifier = Modifier.weight(1f),
-            ) { scope = LinkRule.SCOPE_CALLER }
-            ScopeChoice(
-                text = "目标",
-                selected = scope == LinkRule.SCOPE_TARGET,
-                modifier = Modifier.weight(1f),
-            ) { scope = LinkRule.SCOPE_TARGET }
-        }
+        ScopeSelector(
+            caller = scope == LinkRule.SCOPE_CALLER,
+            onSelect = { caller ->
+                scope = if (caller) LinkRule.SCOPE_CALLER else LinkRule.SCOPE_TARGET
+            },
+        )
         Spacer(Modifier.height(6.dp))
         AppText(
             "入口 = 只有这些页面里点出去的链接才拦（推荐）；目标 = 按打开的网页 Activity 拦。",
@@ -399,21 +468,65 @@ fun RuleEditDialog(
 
 /** 规则作用域的单选项：RadioButton + 文字，整行可点。 */
 @Composable
+private fun ScopeSelector(caller: Boolean, onSelect: (Boolean) -> Unit) {
+    // 整条一个浅底轨道：单选组原本没有任何底色，直接铺在弹窗面上会和背景连成一片。
+    val track = if (LocalDarkTheme.current) {
+        Color.White.copy(alpha = 0.06f)
+    } else {
+        Color.Black.copy(alpha = 0.05f)
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(track)
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        ScopeChoice("入口", caller, Modifier.weight(1f)) { onSelect(true) }
+        ScopeChoice("目标", !caller, Modifier.weight(1f)) { onSelect(false) }
+    }
+}
+
+@Composable
 private fun ScopeChoice(
     text: String,
     selected: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    val shape = RoundedCornerShape(9.dp)
+    // 选中那块要比轨道亮一档，浅色用纯白、深色用 #3C3C3C，靠亮度差代替描边
+    val thumb = if (LocalDarkTheme.current) Color(0xFF3C3C3C) else Color.White
     Row(
         modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(shape)
+            .then(
+                if (selected) {
+                    Modifier
+                        .background(thumb)
+                        .border(0.5.dp, MiuixTheme.colorScheme.outline, shape)
+                } else {
+                    Modifier
+                },
+            )
             .clickable(onClick = onClick)
-            .padding(horizontal = 4.dp, vertical = 6.dp),
+            .padding(vertical = 7.dp),
+        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         RadioButton(selected = selected, onClick = null)
-        AppText(text, fontSize = 14.sp, maxLines = 1)
+        Spacer(Modifier.width(6.dp))
+        AppText(
+            text,
+            fontSize = 14.sp,
+            color = if (selected) {
+                MiuixTheme.colorScheme.onSurface
+            } else {
+                MiuixTheme.colorScheme.onSurfaceVariantSummary
+            },
+            maxLines = 1,
+        )
     }
 }
 

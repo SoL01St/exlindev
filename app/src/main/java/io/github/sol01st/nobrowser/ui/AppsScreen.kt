@@ -76,7 +76,9 @@ fun AppsScreen(
     var menuPkg by remember { mutableStateOf<String?>(null) }
     // 长按菜单锚点：弹层从这一行长出来，用窗口坐标
     var menuBounds by remember { mutableStateOf(Rect.Zero) }
-    // 官方折叠：MiuixScrollBehavior 驱动「大标题 → 上滑折叠成小标题」
+    // 官方折叠：MiuixScrollBehavior 驱动「大标题 → 上滑折叠成小标题」。
+    // 折叠状态不跨二级页保留（页面重建会重置）；AppRoot 在返回时把列表滚回顶部，
+    // 保证「顶栏展开 + 列表在顶」这一对状态始终一致，不会出现标题压内容。
     val scrollBehavior = MiuixScrollBehavior()
     NxbPageScaffold(
         title = ScreenTitle,

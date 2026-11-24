@@ -99,6 +99,7 @@ fun SettingsScreen(
 
     // 和首页一致：官方 TopAppBar + MiuixScrollBehavior，大标题上滑折叠成中间小标题
     val scrollBehavior = MiuixScrollBehavior()
+
     NxbPageScaffold(
         title = "设置",
         largeTitle = "设置",
@@ -136,8 +137,8 @@ fun SettingsScreen(
                 }
             }
 
-            // ===== 保活策略 =====
-            item { SmallTitle("权限") }
+            // ===== 应用 =====
+            item { SmallTitle("应用") }
             item {
                 GroupCard {
                     BasicComponent(
@@ -161,12 +162,32 @@ fun SettingsScreen(
                     GroupDivider()
                     BasicComponent(
                         title = "允许自启动",
-                        summary = "如需每个应用弹出胶囊位置统一，请授予自启动权限",
+                        summary = "后台清理后，各应用胶囊拖动位置会不一致；如需统一，请授予自启动权限",
                         endActions = {
                             Switch(
                                 checked = autoStart,
                                 onCheckedChange = {
                                     context.startActivity(KeepAlive.appDetailsIntent(context))
+                                },
+                            )
+                        },
+                    )
+                    GroupDivider()
+                    BasicComponent(
+                        title = "隐藏桌面图标",
+                        summary = if (launcherVisible) {
+                            "开启后桌面不再显示图标"
+                        } else {
+                            "已隐藏 · 请从 LSPosed 模块设置右下角「打开」进入本应用"
+                        },
+                        endActions = {
+                            Switch(
+                                checked = !launcherVisible,
+                                onCheckedChange = { hide ->
+                                    val ok = LauncherIconManager.setVisible(context, !hide)
+                                    launcherVisible = LauncherIconManager.isVisible(context)
+                                    // 成功不打扰，只在切换失败时提示
+                                    if (!ok) toast("切换失败，请重试")
                                 },
                             )
                         },
@@ -185,6 +206,7 @@ fun SettingsScreen(
                         } else {
                             "导出 / 导入规则文件 · 已有 $backupCount 份备份"
                         },
+                        endActions = { NxbArrow() },
                         onClick = onOpenBackup,
                     )
                 }
@@ -197,33 +219,8 @@ fun SettingsScreen(
                     BasicComponent(
                         title = "模块日志",
                         summary = "查看每次跳转的拦截 / 放行原因（读 logcat 需要 root）",
+                        endActions = { NxbArrow() },
                         onClick = onOpenLogs,
-                    )
-                }
-            }
-
-            // ===== 启动入口 =====
-            item { SmallTitle("启动入口") }
-            item {
-                GroupCard {
-                    BasicComponent(
-                        title = "显示桌面图标",
-                        summary = if (launcherVisible) {
-                            "关闭后桌面不再显示图标，仍可从 LSPosed「模块设置 → 打开」进入"
-                        } else {
-                            "已隐藏 · 请从 LSPosed 模块设置右下角「打开」进入本应用"
-                        },
-                        endActions = {
-                            Switch(
-                                checked = launcherVisible,
-                                onCheckedChange = { next ->
-                                    val ok = LauncherIconManager.setVisible(context, next)
-                                    launcherVisible = LauncherIconManager.isVisible(context)
-                                    // 成功不打扰，只在切换失败时提示
-                                    if (!ok) toast("切换失败，请重试")
-                                },
-                            )
-                        },
                     )
                 }
             }
@@ -235,6 +232,7 @@ fun SettingsScreen(
                     BasicComponent(
                         title = "版本 ${BuildConfig.VERSION_NAME}",
                         summary = "检查更新、GitHub 仓库",
+                        endActions = { NxbArrow() },
                         onClick = onOpenAbout,
                     )
                 }

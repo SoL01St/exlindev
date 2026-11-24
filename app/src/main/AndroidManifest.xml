@@ -51,7 +51,7 @@
             </intent-filter>
         </activity>
 
-        <!-- 桌面图标：由设置里的「显示桌面图标」开关启停（LauncherIconManager）。 -->
+        <!-- 桌面图标：由设置里的「隐藏桌面图标」开关启停（LauncherIconManager），默认不隐藏。 -->
         <activity-alias
             android:name=".Launcher"
             android:enabled="true"
