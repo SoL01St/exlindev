@@ -30,8 +30,11 @@ import android.widget.TextView
 import io.github.sol01st.nobrowser.core.Constants
 import io.github.sol01st.nobrowser.core.DefaultRules
 import io.github.sol01st.nobrowser.core.LinkRule
+import io.github.sol01st.nobrowser.core.RouteRule
+import io.github.sol01st.nobrowser.core.RoutesCodec
 import io.github.sol01st.nobrowser.core.RulesCodec
 import io.github.sol01st.nobrowser.core.TargetApp
+import io.github.sol01st.nobrowser.core.UrlTransform
 import io.github.sol01st.nobrowser.core.UrlUtil
 import io.github.libxposed.api.XposedInterface
 import io.github.libxposed.api.XposedModule
@@ -52,6 +55,8 @@ internal object HookEngine {
 
     private const val TAG = "ExLinkNoBrowser"
     private const val CONFIG_PATH = "/data/local/tmp/nxb_config.json"
+    private const val ROUTES_PATH = "/data/local/tmp/nxb_routes.json"
+
     private val PROCEED = Any()
 
     /**
@@ -97,6 +102,16 @@ internal object HookEngine {
     @Volatile
     private var configSignature = Int.MIN_VALUE
 
+    /** 目标应用路由规则（独立配置、独立热加载）。 */
+    @Volatile
+    private var routes: List<RouteRule> = emptyList()
+
+    private var routesSignature = Int.MIN_VALUE
+
+    /** 最近一次路由命中的时间：只在这个窗口内自动确认 QQ 的「即将离开」弹窗。 */
+    @Volatile
+    private var lastRouteHitAt = 0L
+
     private var installed = false
 
     fun onPackageLoaded(module: XposedModule, packageName: String, loader: ClassLoader) {
@@ -106,7 +121,10 @@ internal object HookEngine {
         val app = decodeRules(raw).firstOrNull { it.packageName == packageName && it.enabled } ?: return
         currentApp = app
         configSignature = signatureOf(raw)
-        i("attached to $packageName, rules=${app.rules.size}, ask=${app.askEachTime}")
+        val rawRoutes = readRawRoutes(module)
+        routesSignature = signatureOf(rawRoutes)
+        routes = RoutesCodec.decode(rawRoutes)
+        i("attached to $packageName, rules=${app.rules.size}, routes=${routes.size}, ask=${app.askEachTime}")
         install(module, loader)
     }
 
@@ -116,12 +134,37 @@ internal object HookEngine {
      */
     @Synchronized
     private fun refreshConfig(module: XposedModule, packageName: String) {
+        // 规则与路由是两份独立配置，各自比对指纹，互不干扰
+        val rawRoutes = readRawRoutes(module)
+        val routesSig = signatureOf(rawRoutes)
+        if (routesSig != routesSignature) {
+            routesSignature = routesSig
+            routes = RoutesCodec.decode(rawRoutes)
+            i("routes reloaded: ${routes.size}")
+        }
         val raw = readRawConfig(module)
         val signature = signatureOf(raw)
         if (signature == configSignature) return
         configSignature = signature
         currentApp = decodeRules(raw).firstOrNull { it.packageName == packageName && it.enabled }
         i("config reloaded for $packageName, ask=${currentApp?.askEachTime}")
+    }
+
+    /**
+     * 路由配置源，顺序与 [readRawConfig] 一致：
+     * 框架远程配置优先（零 root、改完即生效），其次老的文件通道。
+     */
+    private fun readRawRoutes(module: XposedModule): String? {
+        val remote = runCatching {
+            val prefs = remotePrefs ?: module.getRemotePreferences(Constants.PREFS_NAME)
+                .also { remotePrefs = it }
+            prefs.getString(Constants.PREFS_KEY_ROUTES, null)
+        }.getOrNull()
+        if (!remote.isNullOrBlank()) return remote
+        return runCatching {
+            val file = java.io.File(ROUTES_PATH)
+            if (file.exists() && file.canRead()) file.readText() else null
+        }.getOrNull()?.takeIf { it.isNotBlank() }
     }
 
     /**
@@ -165,6 +208,52 @@ internal object HookEngine {
         hookMethod(module, activityClass, "startActivity", arrayOf(intent, bundle), hooker)
         hookMethod(module, activityClass, "startActivityForResult", arrayOf(intent, intType), hooker)
         hookMethod(module, activityClass, "startActivityForResult", arrayOf(intent, intType, bundle), hooker)
+
+        // QQ 在跳外部应用时会弹「即将离开QQ / 打开其他应用」确认框。
+        // 路由命中后短时间内自动替用户点「允许」，做到真正的一点即跳。
+        val dialogClass = runCatching { loader.loadClass("android.app.Dialog") }.getOrNull()
+        if (dialogClass != null) {
+            hookMethod(module, dialogClass, "show", emptyArray(), object : XposedInterface.Hooker {
+                override fun intercept(chain: XposedInterface.Chain): Any? {
+                    val result = chain.proceed()
+                    if (System.currentTimeMillis() - lastRouteHitAt in 0..8_000L) {
+                        runCatching { autoConfirmLeaveDialog(chain.getThisObject() as? Dialog) }
+                    }
+                    return result
+                }
+            })
+        }
+    }
+
+    /**
+     * 自动确认 QQ 的跨应用离开提示：只认同时出现「即将离开」与「允许」的对话框，
+     * 其它弹窗一律不碰。点不到按钮时保留弹窗（绝不 dismiss——那等于替用户点了取消）。
+     */
+    private fun autoConfirmLeaveDialog(dialog: Dialog?) {
+        dialog ?: return
+        val decor = dialog.window?.decorView ?: return
+        val labels = ArrayList<TextView>()
+        fun walk(v: View) {
+            if (v is ViewGroup) {
+                for (i in 0 until v.childCount) walk(v.getChildAt(i))
+            } else if (v is TextView) {
+                labels.add(v)
+            }
+        }
+        walk(decor)
+        val joined = labels.joinToString(" ") { it.text?.toString().orEmpty() }
+        if (!joined.contains("即将离开")) return
+        // 放宽按钮匹配：QQ 不同版本文案可能是「允许」「允许打开」「继续访问」「仍要打开」…
+        val allow = labels.firstOrNull { v ->
+            val t = v.text?.toString()?.trim().orEmpty()
+            t.isNotBlank() && listOf("允许", "继续", "打开", "确定", "仍要", "OK", "是").any { t.contains(it) }
+        }
+        if (allow == null) {
+            i("skip(dialog-no-button) pkg=dialog caller=qq texts=${joined.take(120)}")
+            return
+        }
+        allow.performClick()
+        i("skip(dialog-auto-allow) pkg=dialog caller=qq text=${allow.text}")
     }
 
     private fun hookMethod(
@@ -255,12 +344,6 @@ internal object HookEngine {
         }
         if (!rawUrl.startsWith("http")) return PROCEED
 
-        val activeWhite = app.whiteUrls.filter { it !in app.disabledWhiteUrls }
-        if (UrlUtil.matchWhite(rawUrl, activeWhite)) {
-            i("whitelisted pkg=$pkg url=$rawUrl")
-            return PROCEED
-        }
-
         // 闲鱼 / QQ 邮箱 / 钉钉会把外链包在自家域名下跳转，交给浏览器前解包成真实地址，
         // 否则用户在浏览器里只会看到提示页或接口报错（如 QQ 邮箱的 ret -5002 Invalid url）
         var openUrl = UrlUtil.unwrapRedirect(rawUrl)
@@ -275,12 +358,184 @@ internal object HookEngine {
         }
         i("intercept pkg=$pkg caller=$caller target=$target url=$openUrl")
 
-        if (app.askEachTime) {
-            activity.runOnUiThread { showChooser(activity, intent, openUrl) }
+        // 白名单：中转页与解包后的真实地址任一命中即放行，保持应用内打开
+        val activeWhite = app.whiteUrls.filter { it !in app.disabledWhiteUrls }
+        if (UrlUtil.matchWhite(rawUrl, activeWhite) || UrlUtil.matchWhite(openUrl, activeWhite)) {
+            i("whitelisted pkg=$pkg url=$rawUrl -> $openUrl")
+            return PROCEED
+        }
+
+        // 目标应用路由：显式配置的域名/正则优先于「每次询问」
+        val outcome = dispatch(openUrl, pkg)
+        if (outcome.rule != null) {
+            lastRouteHitAt = System.currentTimeMillis()
+            // 带上改写后的地址：「应用打开了但没跳到目标页」几乎都是模板拼错，日志里能直接看出来
+            i(
+                "skip(route-hit) pkg=$pkg caller=$caller target=$target " +
+                    "rule=${outcome.rule.name}:${outcome.rule.targetPackage} url=${outcome.url.take(200)}",
+            )
+            val launched = openViaRoute(activity, outcome.url, outcome.rule)
+            if (launched) return null
+            i("skip(route-failed) pkg=$pkg caller=$caller target=$target rule=${outcome.rule.name}")
         } else {
-            openExternal(activity, openUrl)
+            i("skip(no-route) pkg=$pkg caller=$caller target=$target url=$openUrl")
+        }
+
+        val finalUrl = outcome.url
+        if (app.askEachTime) {
+            activity.runOnUiThread { showChooser(activity, intent, finalUrl) }
+        } else {
+            openExternal(activity, finalUrl)
         }
         return null
+    }
+
+    private data class DispatchOutcome(val url: String, val rule: RouteRule?)
+
+    /**
+     * 多轮分发：命中 RE_DISPATCH 规则时把改写结果喂给下一轮，最多 3 轮。
+     * 每轮可单独做短链解析与正则捕获组改写，与 LinkGo 的链式分发语义一致。
+     */
+    private fun dispatch(url: String, callerPkg: String): DispatchOutcome {
+        var current = url
+        for (step in 0 until 3) {
+            // 注意：不能在 QQ 进程里用 getApplicationInfo 预检目标是否安装——
+            // 宿主没有 QUERY_ALL_PACKAGES，Android 11+ 包可见性会让「已安装」的目标也查不到，
+            // 从而误跳过正确规则。改为命中后真实尝试启动，失败再由 openViaRoute 逐级降级。
+            val rule = routes.firstOrNull { it.matches(current, callerPkg) }
+                ?: return DispatchOutcome(current, null)
+            val effective = if (rule.resolveShortLink) {
+                val resolved = UrlTransform.resolveShortLink(current)
+                i("resolve short link: $current -> $resolved")
+                resolved
+            } else {
+                current
+            }
+            val transformed = rule.rewrite(effective)
+            if (rule.resolveStrategy != RouteRule.STRATEGY_RE_DISPATCH) {
+                return DispatchOutcome(transformed, rule)
+            }
+            if (transformed == current) {
+                // 改写没有产生变化，避免自我循环，直接按本规则执行
+                return DispatchOutcome(transformed, rule)
+            }
+            i("re-dispatch step=$step $current -> $transformed")
+            current = transformed
+        }
+        // 达到轮次上限仍未落到具体目标：交回浏览器
+        return DispatchOutcome(current, null)
+    }
+
+    /** 这次 startActivity 是不是由「扫码 / 识别二维码」触发的。 */
+
+    /**
+     * 按路由规则拉起目标应用。
+     * 目标包名支持 "包名/.Activity" 形式指定显式组件；未安装或无匹配 Activity 时返回 false，
+     * 由调用方回退到原有的询问框 / 浏览器逻辑。
+     */
+    private fun openViaRoute(activity: Activity, finalUrl: String, route: RouteRule): Boolean {
+        if (route.targetPackage.isBlank()) return false
+        val basePkg = route.targetPackage.substringBefore("/")
+        val baseCls = route.targetPackage.takeIf { it.contains("/") }?.substringAfter("/")
+
+        // 1) intent:// 模板：用 parseUri 带出 extras，并覆盖目标组件
+        if (finalUrl.startsWith("intent://", ignoreCase = true)) {
+            val parsed = UrlTransform.parseIntentUri(finalUrl, basePkg, baseCls)
+            if (parsed != null) {
+                parsed.putExtra(Constants.EXTRA_GUARD, true)
+                if (startSafely(activity, parsed, "intent-uri target=${route.targetPackage}")) return true
+            }
+        }
+
+        // 2) 自定义 scheme（qklink:// / oof.disk:// 这类深链）：优先只限定包名 + ACTION_VIEW，
+        //    让系统按目标应用的 intent-filter 分发到真正处理深链的 Activity。
+        //    强行指定 MainActivity 会把 data 交给「不认深链的首页」，表现就是应用打开了但停在首页。
+        val scheme = runCatching { Uri.parse(finalUrl).scheme?.lowercase() }.getOrNull()
+        val isHttp = scheme == "http" || scheme == "https"
+        if (!isHttp) {
+            val byScheme = Intent(Intent.ACTION_VIEW, Uri.parse(finalUrl)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                setPackage(basePkg)
+                putExtra(Constants.EXTRA_GUARD, true)
+            }
+            if (startSafely(activity, byScheme, "scheme target=$basePkg")) return true
+            i("scheme dispatch failed, fallback to explicit: $finalUrl")
+        }
+
+        // 3) 指定显式 Activity（规则里写了 包名/.Activity）
+        if (!baseCls.isNullOrBlank()) {
+            val explicit = Intent(Intent.ACTION_VIEW, Uri.parse(finalUrl)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                setClassName(basePkg, baseCls)
+                putExtra(Constants.EXTRA_GUARD, true)
+            }
+            if (startSafely(activity, explicit, "explicit target=${route.targetPackage}")) return true
+            // 显式 Activity 名可能已失效（版本更新改了类名）：退回只限定包名，让系统挑 Activity
+            i("explicit activity failed, fallback to package only: $basePkg")
+        }
+
+        // 4) 只限定包名（最常见、也最耐版本变化）
+        if (isHttp) {
+            val byPackage = Intent(Intent.ACTION_VIEW, Uri.parse(finalUrl)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                setPackage(basePkg)
+                putExtra(Constants.EXTRA_GUARD, true)
+            }
+            if (startSafely(activity, byPackage, "by-package target=$basePkg")) return true
+        }
+
+        // 5) 包名限定的 VIEW 也失败：在目标应用里问一次「谁能处理这个链接」，用查到的组件再试一次。
+        //    注意用 FLAG_ACTIVITY_NEW_TASK 的同等条件查询，避免与上面的启动条件不一致。
+        val probe = Intent(Intent.ACTION_VIEW, Uri.parse(finalUrl)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            setPackage(basePkg)
+        }
+        val resolved = runCatching { activity.packageManager.queryIntentActivities(probe, 0) }
+            .getOrNull()?.firstOrNull()
+        if (resolved != null) {
+            val explicitFound = Intent(Intent.ACTION_VIEW, Uri.parse(finalUrl)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                component = android.content.ComponentName(
+                    resolved.activityInfo.packageName,
+                    resolved.activityInfo.name,
+                )
+                putExtra(Constants.EXTRA_GUARD, true)
+            }
+            if (startSafely(activity, explicitFound, "resolved target=$basePkg")) return true
+        }
+
+        // 6) 最后兜底：目标应用根本不认这个链接（典型是只做 scheme、没注册 App Link 的 App，
+        //    系统返回 START_INTENT_NOT_RESOLVED=-91）。这时至少把 App 打开，
+        //    否则用户看到的是「点了完全没反应」——比打开首页更糟。
+        val launch = runCatching { activity.packageManager.getLaunchIntentForPackage(basePkg) }
+            .getOrNull()
+        val home = launch ?: Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+            setPackage(basePkg)
+        }
+        home.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        home.putExtra(Constants.EXTRA_GUARD, true)
+        if (startSafely(activity, home, "app-home target=$basePkg")) {
+            i("skip(route-home) pkg=route caller=app-home target=$basePkg")
+            return true
+        }
+
+        Log.w(TAG, "route launch failed entirely: target=${route.targetPackage} url=$finalUrl")
+        return false
+    }
+
+    private fun startSafely(activity: Activity, intent: Intent, tag: String): Boolean {
+        // 1) 系统服务直连：绕过宿主应用替换过的 Instrumentation
+        if (startExternalDirect(activity, intent, tag)) return true
+        // 2) 最后的降级：Application context（会被宿主 Instrumentation 拦，只作兜底）
+        return runCatching {
+            activity.applicationContext.startActivity(intent)
+            i("skip(route-ok) pkg=route caller=$tag target=${intent.component?.flattenToShortString() ?: intent.`package`}")
+            true
+        }.onFailure {
+            Log.w(TAG, "route launch failed [$tag]", it)
+            i("skip(route-err) pkg=route caller=$tag target=${intent.component?.flattenToShortString() ?: intent.`package`}")
+        }.getOrDefault(false)
     }
 
     /** 这次 startActivity 是不是由「扫码 / 识别二维码」触发的。 */
@@ -413,7 +668,7 @@ internal object HookEngine {
      * 所以 Activity / Application context 的 startActivity 都会被它拦一道；只有绕过
      * 应用层的 Instrumentation、直接走系统服务才能不弹框。
      */
-    private fun startExternalDirect(activity: Activity, intent: Intent): Boolean {
+    private fun startExternalDirect(activity: Activity, intent: Intent, tag: String = "external"): Boolean {
         if (android.os.Build.VERSION.SDK_INT < 29) return false
         return runCatching {
             // 宿主进程里非 SDK 接口默认受 hidden API 限制，先尝试解除
@@ -445,11 +700,23 @@ internal object HookEngine {
                     else -> null
                 }
             }.toTypedArray()
-            method.invoke(service, *args)
-            Log.i(TAG, "start external via ATM: ${intent.data}")
+            // startActivity 返回 START_SUCCESS=0，其余值说明系统明确拒绝了这次启动，
+            // 不能当成成功（否则会静默吞掉这次点击，用户看到的就是「没反应」）。
+            val ret = method.invoke(service, *args) as? Int ?: 0
+            val target = intent.component?.flattenToShortString() ?: intent.`package`
+            if (ret != 0) {
+                i("skip(route-atm-err) pkg=route caller=$tag rc=$ret target=$target")
+                return false
+            }
+            i("skip(route-atm) pkg=route caller=$tag rc=0 target=$target")
             true
-        }.onFailure { Log.w(TAG, "ATM start failed, fallback to context", it) }.getOrDefault(false)
+        }.onFailure {
+            Log.w(TAG, "ATM start failed, fallback to context", it)
+            i("skip(route-atm-throw) pkg=route caller=$tag err=${it.javaClass.simpleName}")
+        }.getOrDefault(false)
     }
+
+    /** 液态玻璃风格选择框：背景实时模糊 + 半透明卡片。 */
     /** 默认落点：可用区域中部偏下，单手拇指的自然位置。 */
     private val DEFAULT_CHOOSER_RATIO = 0.5f to 0.62f
 
