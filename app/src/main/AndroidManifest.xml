@@ -66,6 +66,26 @@
         </activity-alias>
 
 
+        <!--
+          常驻启用，永不禁用：隐藏桌面图标（禁用 .Launcher）后，
+          LSPosed / 系统设置靠 getLaunchIntentForPackage() 仍能打开本模块。
+          注意必须带 CATEGORY_DEFAULT：该查询使用 MATCH_DEFAULT_ONLY，缺少它不会被命中。
+          桌面启动器只收录 CATEGORY_LAUNCHER，所以这个别名不会显示图标。
+        -->
+        <activity-alias
+            android:name=".InfoEntry"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:targetActivity=".ui.MainActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.INFO" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
+
         <meta-data
             android:name="xposedmodule"
             android:value="true" />
