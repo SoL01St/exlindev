@@ -20,6 +20,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import io.github.sol01st.nobrowser.BuildConfig
+import io.github.sol01st.nobrowser.core.RouteRule
 import io.github.sol01st.nobrowser.core.TargetApp
 import io.github.sol01st.nobrowser.data.KeepAlive
 import io.github.sol01st.nobrowser.data.LauncherIconManager
@@ -51,14 +52,18 @@ private fun themeTitle(mode: ThemeMode): String = when (mode) {
 @Composable
 fun SettingsScreen(
     store: RuleStore,
+    routes: List<RouteRule>,
     listState: LazyListState,
     onOpenAbout: () -> Unit,
     onOpenLogs: () -> Unit,
     onOpenBackup: () -> Unit,
+    onOpenRoutes: () -> Unit,
 ) {
     val context = LocalContext.current
 
     fun toast(msg: String) = HintState.show(msg)
+
+    val routeCount = remember(routes) { routes.count { it.enabled } }
 
     // 桌面图标开关的当前状态直接从 PackageManager 读，不额外存 pref，避免和系统不同步
     var launcherVisible by remember { mutableStateOf(LauncherIconManager.isVisible(context)) }
@@ -191,6 +196,23 @@ fun SettingsScreen(
                                 },
                             )
                         },
+                    )
+                }
+            }
+
+            // ===== 目标应用路由（nxb 定制）=====
+            item { SmallTitle("规则") }
+            item {
+                GroupCard {
+                    BasicComponent(
+                        title = "目标应用路由",
+                        summary = if (routeCount == 0) {
+                            "按链接域名 / 正则直接拉起指定应用（115、夸克等）"
+                        } else {
+                            "按链接域名 / 正则直接拉起指定应用 · 已启用 $routeCount 条"
+                        },
+                        endActions = { NxbArrow() },
+                        onClick = onOpenRoutes,
                     )
                 }
             }

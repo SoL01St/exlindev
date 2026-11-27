@@ -1,5 +1,6 @@
 package io.github.sol01st.nobrowser.data
 
+import android.content.Context
 import android.util.Log
 import io.github.libxposed.service.XposedService
 import io.github.sol01st.nobrowser.core.Constants
@@ -95,6 +96,25 @@ object ScopeManager {
         }
         Log.w(TAG, "框架远程配置不可用，回落到 root 文件通道")
         return RootShell.publishConfig(context, json)
+    }
+
+    /**
+     * 下发目标应用路由规则。
+     *
+     * 与 [publishConfig] 一样走框架远程配置，用独立的 key 存，
+     * 宿主进程用同一个 group 读 [Constants.PREFS_KEY_ROUTES]。
+     */
+    fun publishRoutes(context: Context, json: String): Boolean {
+        val svc = XposedConnection.service() ?: return false
+        return runCatching {
+            svc.getRemotePreferences(Constants.PREFS_NAME)
+                .edit()
+                .putString(Constants.PREFS_KEY_ROUTES, json)
+                .commit()
+        }.getOrElse { e ->
+            Log.w(TAG, "写入框架远程路由配置失败", e)
+            false
+        }
     }
 
     /** 申请把包加入作用域，等框架回调（LSPosed 一般直接批准）。 */

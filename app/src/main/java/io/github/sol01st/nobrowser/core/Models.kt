@@ -189,4 +189,7 @@ object Constants {
     const val CHOOSER_POS_AUTHORITY = "io.github.sol01st.nobrowser.pos"
     const val SELF_PACKAGE = "io.github.sol01st.nobrowser"
     const val LSPD_DB = "/data/adb/lspd/config/modules_config.db"
+
+    // —— 目标应用路由 ——
+    const val PREFS_KEY_ROUTES = "routes_json"
 }

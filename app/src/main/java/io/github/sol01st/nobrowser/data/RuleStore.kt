@@ -139,11 +139,14 @@ class RuleStore(context: Context) {
         return runCatching { TargetApp.fromJson(org.json.JSONObject(raw)) }.getOrNull()
     }
 
-    fun backup(list: List<TargetApp>): File {
+    fun backup(list: List<TargetApp>): File = backupText(exportJson(list))
+
+    /** 写入任意备份文本（用于含路由的复合备份），保留轮转策略。 */
+    fun backupText(json: String): File {
         backupDir.mkdirs()
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val file = File(backupDir, "rules_$stamp.json")
-        file.writeText(exportJson(list))
+        file.writeText(json)
         // 只保留最近 MAX_BACKUPS 份，旧的自动删掉，避免无限堆积
         backups().drop(MAX_BACKUPS).forEach { runCatching { it.delete() } }
         return file
