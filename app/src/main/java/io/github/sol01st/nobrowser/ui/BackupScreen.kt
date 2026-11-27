@@ -33,7 +33,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.sol01st.nobrowser.core.RulesCodec
+import io.github.sol01st.nobrowser.core.RouteRule
 import io.github.sol01st.nobrowser.core.TargetApp
+import io.github.sol01st.nobrowser.data.BackupBundle
 import io.github.sol01st.nobrowser.data.RuleStore
 import java.io.File
 import java.text.SimpleDateFormat
@@ -55,9 +57,10 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 @Composable
 fun BackupScreen(
     apps: List<TargetApp>,
+    routes: List<RouteRule>,
     store: RuleStore,
     onBack: () -> Unit,
-    onRestore: (List<TargetApp>) -> Unit,
+    onRestore: (List<TargetApp>, List<RouteRule>) -> Unit,
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
@@ -66,8 +69,8 @@ fun BackupScreen(
 
     fun toast(msg: String) = HintState.show(msg)
 
-    var pendingImport by remember { mutableStateOf<List<TargetApp>?>(null) }
-    var pendingRestore by remember { mutableStateOf<List<TargetApp>?>(null) }
+    var pendingImport by remember { mutableStateOf<BackupBundle.Payload?>(null) }
+    var pendingRestore by remember { mutableStateOf<BackupBundle.Payload?>(null) }
     // 备份文件列表 + 选择弹窗：恢复时可以自己挑时间点
     var backupFiles by remember { mutableStateOf(store.backups()) }
     var backupPicker by remember { mutableStateOf(false) }
@@ -79,10 +82,10 @@ fun BackupScreen(
         if (uri != null) {
             val ok = runCatching {
                 context.contentResolver.openOutputStream(uri)?.use {
-                    it.write(store.exportJson(apps).toByteArray())
+                    it.write(BackupBundle.encode(apps, routes).toByteArray())
                 } ?: error("no stream")
             }.isSuccess
-            toast(if (ok) "已导出 ${apps.size} 个应用的规则" else "导出失败")
+            toast(if (ok) "已导出 ${apps.size} 个应用 + ${routes.size} 条路由" else "导出失败")
         }
     }
 
@@ -93,7 +96,7 @@ fun BackupScreen(
         val text = runCatching {
             context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
         }.getOrNull()
-        val parsed = text?.let { store.importJson(it) }
+        val parsed = text?.let { BackupBundle.decode(it) }
         if (parsed == null) {
             toast("导入失败：文件格式不正确")
             return@rememberLauncherForActivityResult
@@ -183,14 +186,15 @@ fun BackupScreen(
     pendingImport?.let { parsed ->
         SimpleDialog(
             title = "导入规则",
-            text = "将用文件中的 ${parsed.size} 个应用规则覆盖当前 ${apps.size} 个应用的配置，确定继续？",
+            text = "将用文件中的 ${parsed.apps.size} 个应用 + ${parsed.routes.size} 条路由覆盖当前配置" +
+                "（${apps.size} 应用 + ${routes.size} 路由），确定继续？",
             confirmText = "覆盖导入",
             onDismiss = { pendingImport = null },
             onConfirm = {
                 pendingImport = null
-                store.save(parsed)
-                onRestore(parsed)
-                toast("导入成功，共 ${parsed.size} 条")
+                store.save(parsed.apps)
+                onRestore(parsed.apps, parsed.routes)
+                toast("导入成功：${parsed.apps.size} 应用 + ${parsed.routes.size} 路由")
             },
         )
     }
@@ -215,7 +219,7 @@ fun BackupScreen(
                             newest = index == 0,
                             onClick = {
                                 backupPicker = false
-                                val parsed = runCatching { store.importJson(file.readText()) }.getOrNull()
+                                val parsed = runCatching { BackupBundle.decode(file.readText()) }.getOrNull()
                                 if (parsed == null) toast("备份读取失败") else pendingRestore = parsed
                             },
                             onLongClick = { pendingDelete = file },
@@ -247,14 +251,14 @@ fun BackupScreen(
     pendingRestore?.let { parsed ->
         SimpleDialog(
             title = "恢复备份",
-            text = "将用备份中的 ${parsed.size} 个应用规则覆盖当前配置，确定继续？",
+            text = "将用备份中的 ${parsed.apps.size} 个应用 + ${parsed.routes.size} 条路由覆盖当前配置，确定继续？",
             confirmText = "恢复",
             onDismiss = { pendingRestore = null },
             onConfirm = {
                 pendingRestore = null
-                store.save(parsed)
-                onRestore(parsed)
-                toast("已恢复 ${parsed.size} 条规则")
+                store.save(parsed.apps)
+                onRestore(parsed.apps, parsed.routes)
+                toast("已恢复 ${parsed.apps.size} 应用 + ${parsed.routes.size} 路由")
             },
         )
     }

@@ -47,9 +47,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import io.github.sol01st.nobrowser.core.RouteRule
 import io.github.sol01st.nobrowser.core.TargetApp
 import io.github.sol01st.nobrowser.data.InstalledApps
 import io.github.sol01st.nobrowser.data.ModuleState
+import io.github.sol01st.nobrowser.data.RouteStore
 import io.github.sol01st.nobrowser.data.RuleStore
 import io.github.sol01st.nobrowser.data.ScopeManager
 import io.github.sol01st.nobrowser.data.XposedConnection
@@ -81,6 +83,7 @@ private fun Route.saveKey(): String = when (this) {
     Route.About -> "about"
     Route.Logs -> "logs"
     Route.Backup -> "backup"
+    Route.Routes -> "routes"
     is Route.Edit -> "edit:" + pkg
 }
 
@@ -95,6 +98,9 @@ sealed interface Route {
 
     /** 备份与恢复页：导出 / 导入 / 立即备份 / 从备份恢复。 */
     data object Backup : Route
+
+    /** 目标应用路由页：按链接域名 / 正则直接拉起指定应用。 */
+    data object Routes : Route
 }
 
 /** 路由层级，用于决定转场方向（进栈从右滑入，出栈从左滑入）。 */
@@ -102,9 +108,11 @@ sealed interface Route {
 fun AppRoot() {
     val context = LocalContext.current
     val store = remember { RuleStore(context) }
+    val routeStore = remember { RouteStore(context) }
     val scope = rememberCoroutineScope()
 
     var apps by remember { mutableStateOf(store.load().toList()) }
+    var routeRules by remember { mutableStateOf(routeStore.load().toList()) }
     var tab by remember { mutableStateOf(Tab.Apps) }
     var route by remember { mutableStateOf<Route>(Route.Root) }
 
@@ -157,6 +165,17 @@ fun AppRoot() {
             kotlinx.coroutines.awaitCancellation()
         } finally {
             XposedConnection.removeListener(listener)
+        }
+    }
+
+    fun persistRoutes(list: List<RouteRule>) {
+        routeRules = list
+        routeStore.save(list)
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                ScopeManager.publishRoutes(context, routeStore.exportJson(list))
+            }
+            if (!ok) HintState.show("路由配置写入失败：请在 KernelSU 里允许本应用使用 root")
         }
     }
 
@@ -405,10 +424,12 @@ fun AppRoot() {
                         } else {
                             SettingsScreen(
                                 store = store,
+                                routes = routeRules,
                                 listState = settingsListState,
                                 onOpenAbout = { route = Route.About },
                                 onOpenLogs = { route = Route.Logs },
                                 onOpenBackup = { route = Route.Backup },
+                                onOpenRoutes = { route = Route.Routes },
                             )
                         }
                         }
@@ -452,10 +473,12 @@ fun AppRoot() {
 
                     is Route.Backup -> BackupScreen(
                         apps = apps,
+                        routes = routeRules,
                         store = store,
                         onBack = { route = Route.Root },
-                        onRestore = { restored ->
+                        onRestore = { restored, restoredRoutes ->
                             persist(restored)
+                            persistRoutes(restoredRoutes)
                             scope.launch {
                                 val installedPkgs = installed.map { it.pkg }.toHashSet()
                                 withContext(Dispatchers.IO) {
@@ -466,6 +489,15 @@ fun AppRoot() {
                                 }
                             }
                         },
+                    )
+
+                    is Route.Routes -> RoutesScreen(
+                        rules = routeRules,
+                        onPersist = { list, msg ->
+                            persistRoutes(list)
+                            msg?.let { HintState.show(it) }
+                        },
+                        onBack = { route = Route.Root },
                     )
 
                 }
