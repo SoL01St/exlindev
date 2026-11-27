@@ -44,6 +44,17 @@ data class ModuleLogEntry(
             "target-mismatch" -> "放行 · 目标不匹配"
             "no-url" -> "放行 · 取不到链接"
             "scan" -> "放行 · 扫码识别"
+            "no-route" -> "路由未命中 · 走询问/浏览器"
+            "route-failed" -> "目标应用不可用 · 走询问/浏览器"
+            "route-hit" -> "路由命中"
+            "route-atm" -> "路由 · 系统直连启动成功"
+            "route-atm-err" -> "路由 · 系统直连被拒"
+            "route-atm-throw" -> "路由 · 系统直连异常"
+            "route-ok" -> "路由 · 已发起启动（降级）"
+            "route-err" -> "路由 · 启动失败"
+            "route-home" -> "路由 · 目标不认该链接，已打开首页"
+            "dialog-auto-allow" -> "已自动允许 QQ 离开确认"
+            "dialog-no-button" -> "QQ 确认框未识别按钮"
             else -> "放行 · $kind"
         }
 
@@ -65,7 +76,14 @@ object ModuleLog {
 
     private val TIME_RE = Regex("""^\d{2}-\d{2}\s+(\d{2}:\d{2}:\d{2})""")
     private val INTERCEPT_RE = Regex("""intercept(?: pkg=(\S+))? caller=(\S+) target=(\S+) url=(\S+)""")
-    private val SKIP_RE = Regex("""skip\(([\w-]+)\)(?: pkg=(\S+))? caller=(\S+)(?: target=(\S+))?(?: keys=(\S+))?""")
+    private val SKIP_RE = Regex("""skip\(([\w-]+)\)""")
+
+    /**
+     * 把 `skip(...)` 之后的 `key=value` 全抓出来。
+     * 之前用固定顺序的正则，一旦日志里字段顺序变了或多出字段（比如 rc=），
+     * 整行就解析不到，日志页表现成「打了日志但看不见」——这是排查时最容易误判的坑。
+     */
+    private val KV_RE = Regex("""(\w+)=(\S+)""")
     private val WHITE_NEW_RE = Regex("""whitelisted pkg=(\S+) url=(\S+)""")
     private val WHITE_OLD_RE = Regex("""whitelisted: (\S+)""")
     private val HOST_RE = Regex("""^https?://([^/?#]+)""", RegexOption.IGNORE_CASE)
@@ -135,15 +153,28 @@ object ModuleLog {
 
             val skip = SKIP_RE.find(line)
             if (skip != null) {
+                val rest = line.substring(skip.range.last + 1)
+                val kv = KV_RE.findAll(rest).associate { it.groupValues[1] to it.groupValues[2] }
+                // 深链本身可能带 &url=…（qklink://…?action=open_url&url=…），KV_RE 会把里面的
+                // url 也抓出来并覆盖外层；行尾的 url= 才是本条日志真正的取值。
+                val urlTail = Regex(""" url=(\S+)\s*$""").find(rest)?.groupValues?.get(1)
+                val detail = buildString {
+                    kv["rule"]?.let { append("rule=").append(it) }
+                    kv["rc"]?.let { if (isNotEmpty()) append(' '); append("rc=").append(it) }
+                    kv["err"]?.let { if (isNotEmpty()) append(' '); append("err=").append(it) }
+                    kv["keys"]?.let { if (isNotEmpty()) append(' '); append("keys=").append(it) }
+                    kv["texts"]?.let { if (isNotEmpty()) append(' '); append("texts=").append(it) }
+                }.takeIf { it.isNotBlank() }
                 out.add(
                     ModuleLogEntry(
-                        packageName = skip.groupValues[2].takeIf { it.isNotBlank() },
+                        // pkg=route / pkg=dialog 是占位符，不该当成包名显示
+                        packageName = kv["pkg"]?.takeIf { it.isNotBlank() && it != "route" && it != "dialog" },
                         time = time,
                         kind = skip.groupValues[1],
-                        caller = skip.groupValues[3],
-                        target = skip.groupValues[4].takeIf { it.isNotBlank() && it != "null" },
-                        url = null,
-                        keys = skip.groupValues[5].takeIf { it.isNotBlank() && it != "-" },
+                        caller = kv["caller"],
+                        target = kv["target"]?.takeIf { it != "null" },
+                        url = urlTail ?: kv["url"],
+                        keys = detail,
                     ),
                 )
             }
